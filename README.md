@@ -34,7 +34,8 @@ VeronaCard, Verona's city pass: every attraction entry with its time, for 2019 (
 
 - [x] Problem definition and the two objectives agreed with the supervisor
 - [x] Data collected: VeronaCard 2019 and 2022, attraction list, walking times
-- [ ] Data exploration: data quality, 2019 vs 2022, baseline Gini per day, sanity checks of the objectives
+- [x] Data exploration: data quality, 2019 vs 2022, routes and hourly crowding (`src/eda.py`, results in [`outputs/eda/summary.md`](outputs/eda/summary.md))
+- [ ] Sanity checks of the objectives on observed routes
 - [ ] Simulator that replays a real day, with hand-written baseline rules
 - [ ] GPHH implementation and experiments
 - [ ] Planned extension: capacity and environmental limits (send visitors only where there is spare capacity)
@@ -44,7 +45,7 @@ VeronaCard, Verona's city pass: every attraction entry with its time, for 2019 (
 | Folder | Content |
 |---|---|
 | `data/` | Datasets and their sources (`data/README.md`) |
-| `src/` | Code (to come) |
+| `src/` | Code: `eda.py` (data exploration, run from the repository root) |
 | `tests/` | Tests (to come) |
 | `configs/` | Experiment settings (to come) |
-| `outputs/` | Results (to come) |
+| `outputs/` | Results: `eda/` (summary and figures) |
