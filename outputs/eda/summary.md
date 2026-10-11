@@ -107,11 +107,11 @@ Rank correlation over the 15 sites in both years: 0.99. Top 3 sites hold 45% of 
 - Most common moves: Arena → Casa Giulietta (26,338); Casa Giulietta → Torre Lamberti (16,671); Arena → Castelvecchio (12,383); Arena → Torre Lamberti (10,839); Santa Anastasia → Duomo (9,060)
 - The top 5 moves are 29% of all moves
 
-- Entries 11:00-12:00 (busy days): Arena 68, Torre Lamberti 38, Casa Giulietta 37, Castelvecchio 32, Palazzo della Ragione 15, Duomo 14, Teatro Romano 12, Santa Anastasia 12, Museo Lapidario 10, San Fermo 10, Tomba Giulietta 9, San Zeno 8, Giardino Giusti 4, Museo Storia 1, Museo Miniscalchi 0
-- People inside at 11:00 (busy days, card holders): Arena 80, Castelvecchio 49, Torre Lamberti 29, Casa Giulietta 19, Palazzo della Ragione 15, Tomba Giulietta 13, Teatro Romano 12, Museo Lapidario 7, Giardino Giusti 4, Duomo 4, Santa Anastasia 2, Museo Storia 2, San Fermo 2, San Zeno 1, Museo Miniscalchi 0
-- Quiet sites within 10 minutes' walk of the Arena at 11:00: Museo Lapidario (5 min, 7), Museo Miniscalchi (10 min, 0), Museo Storia (10 min, 2), San Fermo (10 min, 2), Santa Anastasia (10 min, 2)
 ### Crowding by site and hour, 2019 (busiest quarter of days, 91 days)
 
-- At 11:00: Arena 1.14, Castelvecchio 0.96, Casa Giulietta 0.87; meanwhile Santa Anastasia 0.35, Museo Storia 0.14, Museo Miniscalchi 0.03
+- Entries 11:00-12:00: Arena 68, Torre Lamberti 38, Casa Giulietta 37, Castelvecchio 32, Palazzo della Ragione 15, Duomo 14, Teatro Romano 12, Santa Anastasia 12, Museo Lapidario 10, San Fermo 10, Tomba Giulietta 9, San Zeno 8, Giardino Giusti 4, Museo Storia 1, Museo Miniscalchi 0
+- People inside at 11:00 (card holders): Arena 80, Castelvecchio 49, Torre Lamberti 29, Casa Giulietta 19, Palazzo della Ragione 15, Tomba Giulietta 13, Teatro Romano 12, Museo Lapidario 7, Giardino Giusti 4, Duomo 4, Santa Anastasia 2, Museo Storia 2, San Fermo 2, San Zeno 1, Museo Miniscalchi 0
+- Quiet sites within 10 minutes' walk of the Arena at 11:00: Museo Lapidario (5 min, 7), Museo Miniscalchi (10 min, 0), Museo Storia (10 min, 2), San Fermo (10 min, 2), Santa Anastasia (10 min, 2)
+- C at 11:00: Arena 1.14, Castelvecchio 0.96, Casa Giulietta 0.87; meanwhile Santa Anastasia 0.35, Museo Storia 0.14, Museo Miniscalchi 0.03
 - Sites above 0.5 at 11:00: 10 of 15; below 0.2: 2
 
