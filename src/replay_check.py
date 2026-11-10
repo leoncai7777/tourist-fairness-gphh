@@ -126,7 +126,8 @@ def check_training_days(days):
         f"(tolerance 1e-9).")
     say(f"- Means: sum of A {ours.A.mean():.4f}, alpha x C {ALPHA * ours.C.mean():.4f}, "
         f"beta x T {BETA * ours['T'].mean():.4f}, V(r^O) {value.mean():.4f}")
-    say(f"- V(r^O) <= 0: {(value <= 0).sum():,} routes ({(value <= 0).mean():.2%}), the same count as the EDA computation; "
+    say(f"- V(r^O) <= 0: {(value <= 0).sum():,} routes ({(value <= 0).mean():.2%}), "
+        f"the same count as the EDA computation; "
         f"smallest sum of A {ours.A.min():.4f}")
     say()
 
