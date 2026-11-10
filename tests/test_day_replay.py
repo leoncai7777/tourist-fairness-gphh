@@ -25,7 +25,7 @@ needs_data = pytest.mark.skipif(not (PROCESSED / "manifest.json").exists(), reas
 def small_day():
     """Three sites; visitor 0 goes 0 -> 1, visitor 1 visits site 2 only."""
     visitors = pd.DataFrame({"visitor": ["a_1", "b_1"], "stops": [2, 1], "evaluated": [True, False],
-                             "follows": [True, False]})
+                             "follows": [True, False], "budget_limit": [300.0, 60.0], "stop_limit": [2, 1]})
     fixed = pd.DataFrame({"visitor": [0, 0, 1], "entry_index": [0, 1, 0], "site": [0, 1, 2],
                           "entry": [600.0, 650.0, 610.0], "exit": [640.0, 700.0, 630.0]})
     walk = np.array([[0, 10, 20], [10, 0, 15], [20, 15, 0]], float)
@@ -105,8 +105,10 @@ def test_following_changes_neither_the_evaluated_set_nor_the_numbers():
     assert everyone.visitor.tolist() == some.visitor.tolist() == ["a_1", "b_1", "c_1"]
     assert everyone.evaluated.tolist() == some.evaluated.tolist() == [True, False, True]
     assert some.follows.tolist() == [False, False, True]
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         visitor_frame(visitors, ["b_1"])  # a one-stop visitor cannot follow
+    with pytest.raises(ValueError):
+        visitor_frame(visitors, ["c_1", "x_9"])  # not a visitor of this day
 
 
 # ---------------------------------------------------------------------- #

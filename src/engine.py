@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from day import Day
+from day import Day, validate
 
 STAYS = 1  # named random stream for stays (section 5 of the design)
 VISIT_END, ARRIVAL, START, DECISION = 0, 1, 2, 3
@@ -61,6 +61,7 @@ class DayRun:
     visits: np.ndarray | None = None                                     # x: entries per site at the end
     events: int = 0
     trace: list = field(default_factory=list)
+    settings: dict = field(default_factory=dict)  # what produced this run, saved with any result
 
 
 class Engine:
@@ -234,9 +235,18 @@ def simulate(day: Day, policy, replicate: int = 0, stays: np.ndarray | None = No
              trace: bool = False, check: bool = False) -> DayRun:
     """One day. stays overrides the drawn table (for hand-built tests). policy follows the contract
     in the module docstring."""
-    if stays is None:
-        stays = stay_table(day, replicate)
-    return Engine(day, policy, stays, stop_limit, trace, check).simulate()
+    validate(day)
+    given = stays is not None
+    stays = np.asarray(stays, float) if given else stay_table(day, replicate)
+    if stays.shape != (len(day.visitors), len(day.site_ids)):
+        raise ValueError("the stay table needs one row per visitor and one column per site")
+    if not np.isfinite(stays).all() or (stays < MIN_STAY).any():
+        raise ValueError(f"stays must be finite and at least {MIN_STAY:g} minute")
+    run = Engine(day, policy, stays, stop_limit, trace, check).simulate()
+    run.settings = {"date": f"{day.date:%Y-%m-%d}", "policy": type(policy).__name__, "replicate": replicate,
+                    "stays given": given, "stop_limit": stop_limit, **day.options,
+                    "data_version": day.data_version}
+    return run
 
 
 # ---------------------------------------------------------------------- #

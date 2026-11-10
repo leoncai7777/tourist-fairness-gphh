@@ -15,7 +15,7 @@ Usage:  from day import load_day;  day = load_day("2019-10-09")
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -50,6 +50,7 @@ class Day:
                              # entry, exit. The replay uses all of them; the engine only those of visitors
                              # who do not follow.
     data_version: str
+    options: dict = field(default_factory=dict)  # budget mode and availability mode used to build the day
 
 
 # ---------------------------------------------------------------------- #
@@ -58,6 +59,8 @@ class Day:
 
 @lru_cache(maxsize=None)
 def load_tables(year):
+    if not (PROCESSED / f"visits_{year}.csv.gz").exists():
+        raise ValueError(f"no processed tables for {year}")
     tables = {
         "sites": pd.read_csv(PROCESSED / "sites.csv", index_col=0),
         "hours": pd.read_csv(PROCESSED / "site_hours.csv"),
@@ -119,8 +122,12 @@ def visitor_frame(visitors, follows):
     if follows is None:
         v["follows"] = v["evaluated"]
     else:
+        unknown = set(follows) - set(v["visitor"])
+        if unknown:
+            raise ValueError(f"{len(unknown)} ids in follows are not visitors of this day")
         v["follows"] = v["visitor"].isin(set(follows))
-        assert not (v["follows"] & ~v["evaluated"]).any(), "only evaluated visitors can follow"
+        if (v["follows"] & ~v["evaluated"]).any():
+            raise ValueError("only visitors with two or more stops can follow")
     return v
 
 
@@ -153,21 +160,45 @@ def fixed_array(values):
     return array
 
 
+def validate(day):
+    """Refuse numbers that comparisons would let through quietly (any comparison with NaN is False).
+    The usual GDAY curve may hold NaN early in the day; the features fall back to 1 there."""
+    for name in ("walk", "opening", "closing"):
+        if not np.isfinite(getattr(day, name)).all():
+            raise ValueError(f"{name} must be finite")
+    if (day.walk < 0).any():
+        raise ValueError("walking times must not be negative")
+    for name in ("stay", "usual_peak", "attractiveness"):
+        values = getattr(day, name)
+        if not (np.isfinite(values).all() and (values > 0).all()):
+            raise ValueError(f"{name} must be finite and positive")
+    budget = day.visitors["budget_limit"].to_numpy(float)
+    if not (np.isfinite(budget).all() and (budget > 0).all()):
+        raise ValueError("budgets must be finite and positive")
+    entry, exit_ = day.fixed["entry"].to_numpy(float), day.fixed["exit"].to_numpy(float)
+    if not (np.isfinite(entry).all() and np.isfinite(exit_).all()) or (exit_ < entry).any():
+        raise ValueError("observed intervals must be finite and end after they start")
+
+
 def load_day(date, year=None, follows=None, budget="corrected", same_day=False):
     """One day. budget is "corrected" (main) or "span" (the uncorrected sensitivity run);
     same_day switches availability to the sites with entries that day."""
     if budget not in ("corrected", "span"):
         raise ValueError(f"budget must be 'corrected' or 'span', not {budget!r}")
     date = pd.Timestamp(date)
-    year = year or date.year
+    if year is not None and year != date.year:
+        raise ValueError(f"{date:%Y-%m-%d} is not in {year}")
+    year = date.year
     tables = load_tables(year)
     sites = tables["sites"]
     site_ids = sites.index.to_numpy()
     assert (np.diff(site_ids) > 0).all(), "sites must be in ascending order of id"
     index_of = {site: k for k, site in enumerate(site_ids)}
 
-    visits = tables["visits"][tables["visits"].date == date]
-    visitors = visitor_frame(tables["visitors"][tables["visitors"].date == date], follows)
+    visits = tables["visits"][tables["visits"]["date"] == date]
+    if visits.empty:
+        raise ValueError(f"no visits on {date:%Y-%m-%d} in the {year} data")
+    visitors = visitor_frame(tables["visitors"][tables["visitors"]["date"] == date], follows)
     visitors["budget_limit"] = visitors["budget"] if budget == "corrected" else visitors["span"]
     visitors["stop_limit"] = visitors["stops"]
 
@@ -187,4 +218,4 @@ def load_day(date, year=None, follows=None, budget="corrected", same_day=False):
                usual_gday=fixed_array(usual_curve(tables["usual_gday"], "usual_gday", day_type)),
                usual_arrivals=fixed_array(usual_curve(tables["usual_arrivals"], "usual_arrivals", day_type)),
                visitors=visitors, routes=routes, entries=entries, fixed=fixed,
-               data_version=tables["version"])
+               data_version=tables["version"], options={"budget": budget, "same_day": same_day})

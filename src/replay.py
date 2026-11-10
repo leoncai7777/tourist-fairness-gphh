@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from day import validate
 from scoring import crowding, hourly_person_minutes, route_parts, route_value
 
 
@@ -28,6 +29,7 @@ class Replay:
 
 
 def replay(day):
+    validate(day)
     fixed = day.fixed
     n_sites = len(day.site_ids)
     person_minutes = hourly_person_minutes(fixed["site"], fixed["entry"], fixed["exit"], n_sites)
@@ -46,4 +48,4 @@ def replay(day):
 def baseline_value(result, alpha, beta):
     """V(r^O) of every evaluated visitor for these weights."""
     b = result.baseline
-    return route_value(b["A"], b["C"], b["T"], alpha, beta)  # b["T"] would be the transpose
+    return route_value(b["A"], b["C"], b["T"], alpha, beta)  # b.T would be the transpose

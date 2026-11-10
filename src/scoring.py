@@ -12,15 +12,17 @@ scored, where it is turned into hours once.
 import numpy as np
 
 HOURS = 24
-DAY_END = 60 * HOURS  # a one-day model: nothing may start or end after midnight
+DAY_END = 60 * HOURS  # the hourly arrays cover 0 to 24 h; anything outside is refused, not cut
 
 
 def hourly_person_minutes(site, start, end, n_sites):
     """Person-minutes at each site in each clock hour, from occupancy intervals [start, end].
     Intervals are not cut at any closing time; a zero-length interval adds nothing."""
     site, start, end = np.asarray(site), np.asarray(start, float), np.asarray(end, float)
+    if not (np.isfinite(start).all() and np.isfinite(end).all()) or (end < start).any():
+        raise ValueError("occupancy intervals must be finite and end after they start")
     if (start < 0).any() or (end > DAY_END).any():
-        raise ValueError("an occupancy interval falls outside the day; it would be cut silently")
+        raise ValueError("an occupancy interval falls outside 0 to 24 h; it would be cut silently")
     minutes = np.zeros((n_sites, HOURS))
     for hour in range(HOURS):
         overlap = np.minimum(end, 60 * (hour + 1)) - np.maximum(start, 60 * hour)

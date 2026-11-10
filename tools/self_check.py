@@ -69,13 +69,27 @@ MUTATIONS = [
     ("src/engine.py", "if self.stops_used[k] > 1:", "if self.stops_used[k] > 0:", "first stop treated as chosen"),
     ("src/engine.py", "            self.policy.reset()\n", "            pass\n", "policy state kept between runs"),
     ("src/engine.py", 'if not getattr(self.policy, "may_stop", False):', "if False:", "any rule may stop a visitor"),
+    ("src/engine.py", "            self.run.intervals.append((j, entry, exit_))\n",
+     "            self.run.intervals.append((j, entry, entry + self.day.stay[j]))\n",
+     "background interval from the mean stay, not the observed one"),
+    ("src/engine.py", "if stays.shape != (len(day.visitors), len(day.site_ids)):", "if False:",
+     "stay table of the wrong shape accepted"),
+    ("src/day.py", "        if unknown:\n", "        if False:\n", "unknown follower ids accepted"),
+    ("src/day.py", "    if (day.walk < 0).any():", "    if False:", "negative walking times accepted"),
+    ("src/day.py", "    if visits.empty:", "    if False:", "a day with no visits loads as an empty day"),
     ("src/toptw.py", "feasible &= np.maximum(arrive, instance.opening) + expected + back <= end_time",
      "feasible &= arrive + expected + back <= end_time", "Step 1: no wait for opening"),
 ]
 
 
+TIMEOUT = 900  # seconds; a mutation that makes the code loop must not hang the self-check
+
+
 def run(command, cwd=ROOT):
-    return subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    try:
+        return subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(command, 124, "", f"timed out after {TIMEOUT} s")
 
 
 def pytest_command():
@@ -111,8 +125,9 @@ def run_tests_in_copy(path=None, text=None, bug=None):
     """Run the tests in a fresh copy of the code, with one deliberate bug if given."""
     with tempfile.TemporaryDirectory() as folder:
         copy = Path(folder)
-        shutil.copytree(ROOT / "src", copy / "src")
-        shutil.copytree(ROOT / "tests", copy / "tests")
+        no_cache = shutil.ignore_patterns("__pycache__")
+        shutil.copytree(ROOT / "src", copy / "src", ignore=no_cache)
+        shutil.copytree(ROOT / "tests", copy / "tests", ignore=no_cache)
         (copy / "data").symlink_to(ROOT / "data")  # read-only use of the real data
         if path is not None:
             (copy / path).write_text((ROOT / path).read_text().replace(text, bug))
@@ -183,6 +198,8 @@ def changed_outputs():
 
 
 def main():
+    import numpy, pandas
+    print(f"Python {sys.version.split()[0]}, numpy {numpy.__version__}, pandas {pandas.__version__}")
     print("1. Tests (warnings as errors)")
     passed, summary = check_tests()
     print(f"   {'pass' if passed else 'FAIL'}: {summary}")

@@ -16,6 +16,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from day import PROCESSED, Day, load_day  # noqa: E402
 from engine import Nearest, ObservedOrder, simulate, stay_table  # noqa: E402
+from replay import baseline_value, replay  # noqa: E402
+from scoring import crowding, hourly_person_minutes, relative_value, route_parts  # noqa: E402
 
 needs_data = pytest.mark.skipif(not (PROCESSED / "manifest.json").exists(), reason="processed tables not built")
 
@@ -154,6 +156,60 @@ def test_fixed_visitors_keep_their_times_and_everyone_leaves():
     assert sorted(run.routes) == [0]  # only the follower has a simulated route
 
 
+def check_background_matches_replay(day):
+    """With no followers, the engine only replays the fixed events, so it must give the replay's
+    entries, person-minutes, crowding and A, C, T, V of every evaluated visitor, and R_v = 1."""
+    run = simulate(day, Nearest(), check=True)
+    expected = replay(day)
+    assert run.routes == {} and np.array_equal(run.visits, expected.entries_per_site)
+    for j in range(len(day.site_ids)):
+        engine_times = sorted(t for site, t in run.entries if site == j)
+        assert engine_times == sorted(day.fixed["entry"][day.fixed["site"] == j])
+    site, start, end = (np.array(column) for column in zip(*run.intervals))
+    minutes = hourly_person_minutes(site, start, end, len(day.site_ids))
+    assert np.allclose(minutes, expected.person_minutes, rtol=0, atol=1e-9)
+    c = crowding(minutes, day.usual_peak)
+    for k, (a, c_sum, t) in expected.baseline.iterrows():
+        assert np.allclose(route_parts(day.routes[k], day.entries[k], c, day.attractiveness, day.walk),
+                           (a, c_sum, t), rtol=0, atol=1e-9)
+    value = baseline_value(expected, 0.25, 0.5)
+    assert np.allclose(relative_value(value, value, expected.baseline["A"]), 1.0)
+
+
+def test_no_followers_gives_the_replay_on_a_hand_day():
+    day = hand_day([{"route": [0, 1], "entries": [600, 650], "follows": False, "exits": [640, 660]},
+                    {"route": [1, 2], "entries": [610, 660], "follows": False, "exits": [655, 700]},
+                    {"route": [2], "entries": [620], "follows": False, "exits": [620]}])
+    check_background_matches_replay(day)
+
+
+def test_bad_inputs_are_refused():
+    day = hand_day([{"route": [0, 1], "entries": [600, 650]}])
+    for shape in ((1, 2), (2, 3)):
+        with pytest.raises(ValueError):
+            simulate(day, Nearest(), stays=np.full(shape, 10.0))
+    for value in (np.nan, 0.5):
+        with pytest.raises(ValueError):
+            simulate(day, Nearest(), stays=stays([[40, value, 15]]))
+    for field_name, value in (("walk", np.nan), ("walk", -1.0), ("stay", 0.0), ("usual_peak", np.nan),
+                              ("closing", np.inf)):
+        broken = hand_day([{"route": [0, 1], "entries": [600, 650]}])
+        getattr(broken, field_name)[0] = value
+        with pytest.raises(ValueError):
+            simulate(broken, Nearest())
+        with pytest.raises(ValueError):
+            replay(broken)
+    with pytest.raises(ValueError):  # a fixed interval that ends before it starts
+        replay(hand_day([{"route": [0, 1], "entries": [600, 650], "follows": False, "exits": [590, 660]}]))
+
+
+def test_a_run_keeps_its_settings():
+    day = hand_day([{"route": [0, 1], "entries": [600, 650]}])
+    run = simulate(day, Nearest(), replicate=3, stop_limit=False)
+    assert run.settings["policy"] == "Nearest" and run.settings["replicate"] == 3
+    assert run.settings["stop_limit"] is False and run.settings["stays given"] is False
+
+
 # ---------------------------------------------------------------------- #
 # 3. The observed-order control
 # ---------------------------------------------------------------------- #
@@ -235,6 +291,30 @@ def test_real_day_runs_are_consistent_and_repeatable():
     for run in (nearest, observed):  # both rules read the same stay for the same visitor and site
         for k, route in run.routes.items():
             assert all(stay == table[k, j] for j, _, stay in route)
+
+
+@needs_data
+def test_no_followers_gives_the_replay_on_a_real_day():
+    check_background_matches_replay(load_day("2019-10-09", follows=[]))
+
+
+@needs_data
+def test_load_day_refuses_what_it_cannot_build():
+    with pytest.raises(ValueError):
+        load_day("2019-10-09", year=2022)
+    with pytest.raises(ValueError):
+        load_day("2019-02-30")  # not a date at all
+    with pytest.raises(ValueError):
+        load_day("2020-06-01")  # no tables for that year
+    if (PROCESSED / "visits_2023.csv.gz").exists():
+        with pytest.raises(ValueError):
+            load_day("2023-06-01")  # the 2023 tables stop at February
+    with pytest.raises(ValueError):
+        load_day("2019-10-09", follows=["no such card"])
+    one_stop = load_day("2019-10-09").visitors
+    with pytest.raises(ValueError):
+        load_day("2019-10-09", follows=one_stop["visitor"][~one_stop["evaluated"]].iloc[:1])
+    assert load_day("2019-10-09", budget="span").options == {"budget": "span", "same_day": False}
 
 
 @needs_data
