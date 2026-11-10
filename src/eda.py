@@ -216,8 +216,9 @@ say(f"- First stops and one-stop visits are fixed under every rule: {np.median(b
     f"({arena[arena.t // 60 == 10].fixed.mean():.0%} of its entries at 10:00, {arena[arena.t // 60 == 11].fixed.mean():.0%} at 11:00)")
 length = (arena.end - arena.t).clip(lower=0)
 share_of_hour = lambda h: (lambda o: o[arena.fixed].sum() / o.sum())((arena.end.clip(upper=60 * (h + 1)) - arena.t.clip(lower=60 * h)).clip(lower=0))
-say(f"- Arena's occupancy from those fixed visits: {share_of_hour(10):.0%} at 10:00, {share_of_hour(11):.0%} at 11:00, {length[arena.fixed].sum() / length.sum():.0%} over the day. "
-    f"Arena's morning entries come mostly from first stops, which a rule cannot change; their stays are still sampled in the simulation.")
+say(f"- Reconstructed occupancy at Arena attributable to first-stop and one-stop entries (observed replay): {share_of_hour(10):.0%} at 10:00, {share_of_hour(11):.0%} at 11:00, "
+    f"{length[arena.fixed].sum() / length.sum():.0%} over the day. A rule does not move first-stop entries, so its room to ease peaks they dominate is limited; "
+    f"in the simulation their stays are still sampled.")
 say(f"- An aggregate relaxation that keeps these counts and the same total visits, and ignores routes, time and budgets, has a median lower bound on G_hat of {np.median(bound[:, 1]):.3f}, "
     f"against {np.median(bound[:, 0]):.3f} observed. Fixed counts alone do not explain the observed concentration; this does not show that the bound is attainable.")
 say()

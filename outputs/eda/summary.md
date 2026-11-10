@@ -61,7 +61,7 @@ Availability is an inferred calendar, not a timetable: a site counts as availabl
 | Sun | 1085 | 0.435 | 14.0 |
 
 - First stops and one-stop visits are fixed under every rule: 28% of visits on a median day and 71% of Arena's (94% of its entries at 10:00, 84% at 11:00)
-- Arena's occupancy from those fixed visits: 94% at 10:00, 89% at 11:00, 70% over the day. Arena's morning entries come mostly from first stops, which a rule cannot change; their stays are still sampled in the simulation.
+- Reconstructed occupancy at Arena attributable to first-stop and one-stop entries (observed replay): 94% at 10:00, 89% at 11:00, 70% over the day. A rule does not move first-stop entries, so its room to ease peaks they dominate is limited; in the simulation their stays are still sampled.
 - An aggregate relaxation that keeps these counts and the same total visits, and ignores routes, time and budgets, has a median lower bound on G_hat of 0.060, against 0.441 observed. Fixed counts alone do not explain the observed concentration; this does not show that the bound is attainable.
 
 ## 5. Crowding by site and hour (training days)

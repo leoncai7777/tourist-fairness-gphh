@@ -241,7 +241,8 @@ def day_type_dates(fit):
 
 
 def usual_gday(fit, open_sites):
-    """For each minute, the mean over training days of G_hat of the visits up to that minute. The denominator of GDAY."""
+    """For each minute, the mean over training days of G_hat of the visits up to that minute. The denominator of GDAY.
+    An entry counts from the first minute not earlier than its true time; entries after the last minute are not in the table."""
     minutes = np.arange(FIRST_MINUTE, LAST_MINUTE + 1)
     rows = []
     for day_type, chosen in day_type_dates(fit):
@@ -251,8 +252,10 @@ def usual_gday(fit, open_sites):
             part = fit[(fit.date == date) & fit.site.isin(sites_)]
             counts = np.zeros((minutes.size, len(sites_)))
             position = {site: i for i, site in enumerate(sites_)}
-            for t, site in zip(np.floor(part.t.values).astype(int), part.site.values):
-                counts[max(t - FIRST_MINUTE, 0), position[site]] += 1
+            nodes = np.searchsorted(minutes, part.t.values, side="left")
+            for node, site in zip(nodes, part.site.values):
+                if node < minutes.size:
+                    counts[node, position[site]] += 1
             by_day.append([gini_hat(row) for row in counts.cumsum(axis=0)])
         rows.append(pd.DataFrame({"day_type": day_type, "minute": minutes, "usual_gday": np.nanmean(np.array(by_day), axis=0)}))
     return pd.concat(rows, ignore_index=True)
@@ -265,7 +268,7 @@ def usual_arrivals(fit):
     for day_type, chosen in day_type_dates(fit):
         by_day = []
         for date in chosen:
-            t = np.floor(fit.t[fit.date == date].values)
+            t = fit.t[fit.date == date].values  # true times, seconds included
             by_day.append([((t > minute - 60) & (t <= minute)).sum() for minute in minutes])
         rows.append(pd.DataFrame({"day_type": day_type, "minute": minutes, "usual_arrivals": np.mean(by_day, axis=0)}))
     return pd.concat(rows, ignore_index=True)

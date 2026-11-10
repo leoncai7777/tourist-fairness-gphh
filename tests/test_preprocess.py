@@ -104,3 +104,25 @@ def test_usual_denominators_use_the_same_minute_as_their_numerators():
     assert u["other", 619] == 0 and u["other", 620] == 1
     g = p.usual_gday(d, {pd.Timestamp("2019-01-14"): [49, 52], pd.Timestamp("2019-01-15"): [49, 52]}).set_index(["day_type", "minute"]).usual_gday
     assert g["monday", 600] == 1 and g["monday", 610] == 0  # one site visited, then both once
+
+
+def test_entries_with_seconds_count_from_the_next_minute():
+    d = visits([("a", "2019-01-14", 590, "Duomo"), ("b", "2019-01-14", 600.8, "Arena")])
+    u = p.usual_arrivals(d).set_index(["day_type", "minute"]).usual_arrivals
+    assert u["monday", 600] == 1 and u["monday", 601] == 2  # 600.8 is not up to minute 600
+    assert u["monday", 649] == 2 and u["monday", 650] == 1  # 590 leaves the 60 minutes up to 650
+    assert u["monday", 660] == 1 and u["monday", 661] == 0  # 600.8 is still within (600, 660], gone by 661
+    g = p.usual_gday(d, {pd.Timestamp("2019-01-14"): [49, 52]}).set_index(["day_type", "minute"]).usual_gday
+    assert g["monday", 600] == 1 and g["monday", 601] == 0
+
+
+def test_occupancy_edge_cases():
+    d = visits([("a", "2019-01-14", 640, "Arena"), ("a", "2019-01-14", 710, "Duomo"),
+                ("b", "2019-01-14", 600, "Arena"), ("b", "2019-01-14", 605, "Duomo"),
+                ("c", "2019-01-14", 650, "San Zeno")])
+    i = p.observed_occupancy_intervals(d, pd.Series({49: 60.0, 52: 30.0, 63: 20.0})).set_index(["visitor", "site"])
+    assert i.loc[("a_20190114", 49), "exit"] == 700  # crosses 11:00
+    assert i.loc[("b_20190114", 49), "exit"] == 600  # next entry less the walk is earlier: zero length
+    assert i.loc[("c_20190114", 63), "exit"] == 670  # one-stop visitor stays d
+    hours = sum(float((i.exit.clip(upper=60 * (h + 1)) - i.entry.clip(lower=60 * h)).clip(lower=0).sum()) for h in range(8, 22))
+    assert hours == (i.exit - i.entry).sum()
