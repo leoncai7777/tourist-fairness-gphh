@@ -180,9 +180,10 @@ def validate(day):
         raise ValueError("observed intervals must be finite and end after they start")
 
 
-def load_day(date, year=None, follows=None, budget="corrected", same_day=False):
+def load_day(date, year=None, follows=None, budget="corrected", same_day=False, peak_floor=None):
     """One day. budget is "corrected" (main) or "span" (the uncorrected sensitivity run);
-    same_day switches availability to the sites with entries that day."""
+    same_day switches availability to the sites with entries that day; peak_floor is a common
+    lower bound on the usual peak (a sensitivity run, off by default), used by CR and C alike."""
     if budget not in ("corrected", "span"):
         raise ValueError(f"budget must be 'corrected' or 'span', not {budget!r}")
     date = pd.Timestamp(date)
@@ -213,9 +214,9 @@ def load_day(date, year=None, follows=None, budget="corrected", same_day=False):
     available.flags.writeable = False
     return Day(date=date, day_type=day_type, site_ids=site_ids, available=available,
                attractiveness=fixed_array(sites["A"]), stay=fixed_array(sites["d"]),
-               usual_peak=fixed_array(sites["usual_peak"]), opening=fixed_array(opening),
+               usual_peak=fixed_array(np.maximum(sites["usual_peak"], peak_floor or 0)), opening=fixed_array(opening),
                closing=fixed_array(closing), walk=fixed_array(walking_matrix(tables["walk"], site_ids)),
                usual_gday=fixed_array(usual_curve(tables["usual_gday"], "usual_gday", day_type)),
                usual_arrivals=fixed_array(usual_curve(tables["usual_arrivals"], "usual_arrivals", day_type)),
                visitors=visitors, routes=routes, entries=entries, fixed=fixed,
-               data_version=tables["version"], options={"budget": budget, "same_day": same_day})
+               data_version=tables["version"], options={"budget": budget, "same_day": same_day, "peak_floor": peak_floor})

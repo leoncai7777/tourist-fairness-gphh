@@ -314,7 +314,8 @@ def test_load_day_refuses_what_it_cannot_build():
     one_stop = load_day("2019-10-09").visitors
     with pytest.raises(ValueError):
         load_day("2019-10-09", follows=one_stop["visitor"][~one_stop["evaluated"]].iloc[:1])
-    assert load_day("2019-10-09", budget="span").options == {"budget": "span", "same_day": False}
+    assert load_day("2019-10-09", budget="span").options == {"budget": "span", "same_day": False,
+                                                                   "peak_floor": None}
 
 
 @needs_data

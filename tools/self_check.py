@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
-CHECK_SCRIPTS = ["src/replay_check.py", "src/engine_check.py"]
+CHECK_SCRIPTS = ["src/replay_check.py", "src/engine_check.py", "src/features_check.py"]
 ALLOWED_WARNINGS = ["ignore:Mean of empty slice:RuntimeWarning",
                     "ignore:invalid value encountered in scalar divide:RuntimeWarning"]
 
@@ -77,6 +77,20 @@ MUTATIONS = [
     ("src/day.py", "        if unknown:\n", "        if False:\n", "unknown follower ids accepted"),
     ("src/day.py", "    if (day.walk < 0).any():", "    if False:", "negative walking times accepted"),
     ("src/day.py", "    if visits.empty:", "    if False:", "a day with no visits loads as an empty day"),
+    ("src/features.py", "bisect.bisect_right(entries, engine.now - 60,", "bisect.bisect_right(entries, engine.now - 30,",
+     "ARR over 30 minutes"),
+    ("src/features.py", "engine.on_the_way[candidates] / peak]", "engine.inside[candidates] / peak]",
+     "HEAD reads people inside"),
+    ("src/features.py", "tsv = np.maximum(to, ta)", "tsv = ta", "TSV ignores opening"),
+    ("src/features.py", "return 1.0 if usual is None else g / usual", "return 1.0 if usual is None else g",
+     "GDAY not divided by its usual value"),
+    ("src/features.py", "mean = engine.visits[engine.day.available].mean()", "mean = engine.visits.mean()",
+     "VS mean over every site"),
+    ("src/features.py", "return top[np.argmin(engine.day.site_ids[top])]", "return top[0]",
+     "ties to the first position, not the lowest site id"),
+    ("src/features.py", "value = np.interp(t, MINUTES, curve)", "value = curve[int(t) - FIRST_MINUTE]",
+     "usual curves not interpolated"),
+    ("src/day.py", 'np.maximum(sites["usual_peak"], peak_floor or 0)', 'sites["usual_peak"]', "peak floor ignored"),
     ("src/toptw.py", "feasible &= np.maximum(arrive, instance.opening) + expected + back <= end_time",
      "feasible &= arrive + expected + back <= end_time", "Step 1: no wait for opening"),
 ]

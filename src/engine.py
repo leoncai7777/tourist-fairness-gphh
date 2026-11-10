@@ -62,6 +62,8 @@ class DayRun:
     events: int = 0
     trace: list = field(default_factory=list)
     settings: dict = field(default_factory=dict)  # what produced this run, saved with any result
+    fallbacks: dict = field(default_factory=dict)  # state inputs that fell back, by reason (features.py)
+    decisions: list = field(default_factory=list)  # RQ2 decision log, when a rule keeps one
 
 
 class Engine:
