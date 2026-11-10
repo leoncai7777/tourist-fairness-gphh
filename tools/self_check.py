@@ -107,21 +107,42 @@ def check_scripts():
 # 3. Deliberate bugs, each in a fresh copy of the code
 # ---------------------------------------------------------------------- #
 
+def run_tests_in_copy(path=None, text=None, bug=None):
+    """Run the tests in a fresh copy of the code, with one deliberate bug if given."""
+    with tempfile.TemporaryDirectory() as folder:
+        copy = Path(folder)
+        shutil.copytree(ROOT / "src", copy / "src")
+        shutil.copytree(ROOT / "tests", copy / "tests")
+        (copy / "data").symlink_to(ROOT / "data")  # read-only use of the real data
+        if path is not None:
+            (copy / path).write_text((ROOT / path).read_text().replace(text, bug))
+        return run(pytest_command(), cwd=copy)
+
+
+def classify(result):
+    """pytest exits with 0 when all tests pass and 1 when some test failed. Anything else
+    (a syntax error, a failed import, a usage error) is not a test catching the bug."""
+    if result.returncode == 0:
+        return "NOT CAUGHT"
+    if result.returncode == 1 and " failed" in result.stdout:
+        return "caught"
+    return "ERROR"
+
+
 def check_mutations():
+    baseline = run_tests_in_copy()
+    if baseline.returncode != 0:
+        return [("(unchanged copy)", "the tests must pass before any bug is put in", "ERROR")]
     rows = []
     for path, text, bug, meaning in MUTATIONS:
-        original = (ROOT / path).read_text()
-        if original.count(text) != 1:
+        if (ROOT / path).read_text().count(text) != 1:
             rows.append((path, meaning, "text not found: update this mutation"))
             continue
-        with tempfile.TemporaryDirectory() as folder:
-            copy = Path(folder)
-            shutil.copytree(ROOT / "src", copy / "src")
-            shutil.copytree(ROOT / "tests", copy / "tests")
-            (copy / "data").symlink_to(ROOT / "data")  # read-only use of the real data
-            (copy / path).write_text(original.replace(text, bug))
-            result = run(pytest_command(), cwd=copy)
-        rows.append((path, meaning, "caught" if result.returncode != 0 else "NOT CAUGHT"))
+        result = run_tests_in_copy(path, text, bug)
+        status = classify(result)
+        if status == "ERROR":
+            meaning += "\n" + (result.stdout + result.stderr).strip()[-400:]
+        rows.append((path, meaning, status))
     return rows
 
 
@@ -167,7 +188,8 @@ def main():
     print(f"   {'pass' if passed else 'FAIL'}: {summary}")
 
     print("2. Check scripts")
-    for script, ok, error in check_scripts():
+    scripts = check_scripts()
+    for script, ok, error in scripts:
         print(f"   {'pass' if ok else 'FAIL'}: {script}" + ("" if ok else f"\n      {error}"))
 
     print("3. Deliberate bugs")
@@ -186,7 +208,8 @@ def main():
         print(f"   {line}")
 
     print("6. Read the code line by line against the design: by hand.")
-    failed = (not passed or problems or any(status != "caught" for _, _, status in mutations))
+    failed = (not passed or any(not ok for _, ok, _ in scripts) or problems
+              or any(status != "caught" for _, _, status in mutations))
     sys.exit(1 if failed else 0)
 
 
