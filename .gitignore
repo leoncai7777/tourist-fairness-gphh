@@ -223,3 +223,6 @@ data/verona/data_2023.csv
 
 # Toronto Flickr data: no licence in the source repo, contains Flickr user IDs, keep local only
 data/toronto/
+
+# TOPTW benchmark instances: downloaded from the KU Leuven orienteering page, no stated licence, keep local only
+data/toptw/
