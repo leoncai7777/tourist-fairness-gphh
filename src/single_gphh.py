@@ -78,7 +78,8 @@ toolbox.register("select", tools.selTournament, tournsize=TOURNAMENT)
 toolbox.register("mate", gp.cxOnePointLeafBiased, termpb=0.1)
 toolbox.register("subtree", grow, min_=4, max_=4)
 toolbox.register("mutate", gp.mutUniform, expr=toolbox.subtree, pset=pset)
-# A child over the depth limit is replaced by its parent.
+# A crossover child over the depth limit is replaced by one of its two parents, chosen at random;
+# a mutation child over the limit reverts to its parent. Crossover never picks the root.
 limit = gp.staticLimit(key=operator.attrgetter("height"), max_value=MAX_HEIGHT)
 toolbox.decorate("mate", limit)
 toolbox.decorate("mutate", limit)
@@ -96,6 +97,7 @@ def evaluate(population, instance, durations):
 
 def breed(population):
     """Algorithm 3 of the paper: elites, then crossover, mutation or reproduction.
+    The probabilities are per breeding operation; a crossover adds two offspring, the others one.
     Also counts how often an operator leaves the trees unchanged."""
     offspring = [toolbox.clone(x) for x in tools.selBest(population, ELITES)]
     while len(offspring) < len(population):

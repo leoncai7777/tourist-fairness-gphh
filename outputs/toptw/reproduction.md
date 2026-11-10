@@ -63,7 +63,7 @@ The independent DEAP implementation achieved broadly comparable BasicGP performa
 
 From Table II of the paper: population 1024, 51 generations, 10 elites, tournament size 7, maximal depth 8, crossover 80%, mutation 15%, reproduction 5%, a new sample of visit lengths each generation, 500 test samples. Functions and terminals as in the paper (BasicGP, without MNS and ANS).
 
-Not stated in the paper, and set here as a declared DEAP variant modelled on ECJ's Koza defaults, the paper having used ECJ: initial trees ramped half-and-half with depth 2 to 6; 90% internal crossover points; subtree mutation with trees grown to at most depth 5, where any node may stop early. ECJ's own code and the paper's parameter file were not available, so these operators are not claimed to be identical. A child over the depth limit is replaced by its parent.
+Not stated in the paper, and set here as a declared DEAP variant modelled on ECJ's Koza defaults, the paper having used ECJ: initial trees ramped half-and-half, with a target depth drawn from 2 to 6 (the grow half may stop earlier, down to a single terminal); 90% internal crossover points, never the root, and single-node trees are not crossed; subtree mutation with trees grown to at most depth 5, where any node may stop early. ECJ's own code and the paper's parameter file were not available, so these operators are not claimed to be identical. A crossover child over the depth limit is replaced by one of its two parents, chosen at random; a mutation child over the limit reverts to its parent. The probabilities 80%, 15% and 5% are per breeding operation: a crossover adds two offspring, so more than 80% of the offspring come from crossover.
 
 Operators in practice: mutation left the tree unchanged in 11.7% of cases and crossover in 18.9% (depth limit, or parents that are identical or too small). Priorities that were not finite: 0 over all runs.
 
@@ -78,7 +78,14 @@ Implementation conventions not specified by the paper: negative sampled duration
 
 ## Checks
 
-- `tests/test_toptw.py`: hand-built cases; grown and initial tree shapes and the depth limit; and a recomputation of 1,080 routes outside the simulator, in which every selection satisfied the paper's expected-duration feasibility conditions, each point was visited once and scores agreed. Realised sampled durations may exceed the nominal return budget, as in the paper.
-- Same seed run twice gives the same rule and test score.
-- The code was rewritten for readability after these runs (code hash 3b25478088 to b03f69bee8). Re-running c103 seed 0, r101 seed 3, pr13 seed 7 and c201 seed 1 with the rewritten code gave the same rules, training and test scores, tree sizes and operator counts.
-- Each row of `all40.csv` records the points used, the truncation setting, hashes of the input file and code, and the test seed and sample count.
+Checked by `src/reproduction_report.py` each time this record is generated:
+
+- The results cover exactly the 40 instances of Table III, each with 30 runs, seeds 0 to 29 and no duplicates.
+- Every run used max_points = 100, test seed 20180101 and 500 test samples; each instance file still has the hash recorded with its runs.
+- All runs were made by one code version, 3b25478088. The current code is 80781e6702.
+- `regression_check.csv` holds 8 runs (c103, c201, pr13, r101; seeds 0, 1) made with code 80781e6702. They give the same rules, training and test scores, tree sizes and operator counts as the matching runs above.
+
+Other checks, not run by this script:
+
+- `tests/test_toptw.py`, run with `python3 -m pytest tests -q`: hand-built cases; ties and non-finite priorities; fresh fitness for every individual each generation; grown and initial tree shapes and the depth limit; and a recomputation of 1,080 routes outside the simulator, in which every selection satisfied the paper's expected-duration feasibility conditions, each point was visited once and scores agreed. Realised sampled durations may exceed the nominal return budget, as in the paper.
+- Earlier record, no log kept: on 2026-11-10, with code 3b25478088, a run repeated with the same seed gave the same rule and test score.

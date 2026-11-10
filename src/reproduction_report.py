@@ -16,10 +16,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from toptw import load_instance, sot, test_score
+from single_gphh import fingerprint
+from toptw import TEST_SEED, load_instance, sot, test_score
 
 FOLDER = Path("outputs/toptw")
-MAX_POINTS = 100  # every run uses at most the first 100 candidate points after the depot
+MAX_POINTS = 100    # every run uses at most the first 100 candidate points after the depot
+TEST_SAMPLES = 500
+HASHES = {"input_sha1": str, "code_sha1": str}  # read as text: "80781e6702" would parse as a number
+SAME_RUN = ["train", "test", "height", "nodes", "non_finite", "mutation_unchanged", "crossover_unchanged", "rule"]
 
 # ---------------------------------------------------------------------- #
 # 1. Published values: instance, SOS, SOT, BasicGP mean and sd (Table III)
@@ -124,7 +128,7 @@ def markdown_table(table):
 # 3. The record
 # ---------------------------------------------------------------------- #
 
-def record(table, results, main, supplement, truncated):
+def record(table, results, main, supplement, truncated, checks):
     out = ["# Reproduction of Mei and Zhang (2018), BasicGP", ""]
     out += ["Step 1 of the project: re-implement the single-tourist GPHH and check its results "
             "on the TOPTW instances against Table III of the paper (one-day trips).", ""]
@@ -156,10 +160,14 @@ def record(table, results, main, supplement, truncated):
             "each generation, 500 test samples. Functions and terminals as in the paper (BasicGP, without "
             "MNS and ANS).", ""]
     out += ["Not stated in the paper, and set here as a declared DEAP variant modelled on ECJ's Koza defaults, "
-            "the paper having used ECJ: initial trees ramped half-and-half with depth 2 to 6; 90% internal "
-            "crossover points; subtree mutation with trees grown to at most depth 5, where any node may stop "
-            "early. ECJ's own code and the paper's parameter file were not available, so these operators are "
-            "not claimed to be identical. A child over the depth limit is replaced by its parent.", ""]
+            "the paper having used ECJ: initial trees ramped half-and-half, with a target depth drawn from 2 to 6 "
+            "(the grow half may stop earlier, down to a single terminal); 90% internal crossover points, never "
+            "the root, and single-node trees are not crossed; subtree mutation with trees grown to at most "
+            "depth 5, where any node may stop early. ECJ's own code and the paper's parameter file were not "
+            "available, so these operators are not claimed to be identical. A crossover child over the depth "
+            "limit is replaced by one of its two parents, chosen at random; a mutation child over the limit "
+            "reverts to its parent. The probabilities 80%, 15% and 5% are per breeding operation: a crossover "
+            "adds two offspring, so more than 80% of the offspring come from crossover.", ""]
     out += [f"Operators in practice: mutation left the tree unchanged in {results.mutation_unchanged.mean():.1%} "
             f"of cases and crossover in {results.crossover_unchanged.mean():.1%} (depth limit, or parents that "
             f"are identical or too small). Priorities that were not finite: {int(results.non_finite.sum()):,} "
@@ -185,17 +193,55 @@ def record(table, results, main, supplement, truncated):
             ""]
 
     out += ["## Checks", ""]
-    out += ["- `tests/test_toptw.py`: hand-built cases; grown and initial tree shapes and the depth limit; and "
-            "a recomputation of 1,080 routes outside the simulator, in which every selection satisfied the "
-            "paper's expected-duration feasibility conditions, each point was visited once and scores agreed. "
-            "Realised sampled durations may exceed the nominal return budget, as in the paper.",
-            "- Same seed run twice gives the same rule and test score.",
-            "- The code was rewritten for readability after these runs (code hash 3b25478088 to b03f69bee8). "
-            "Re-running c103 seed 0, r101 seed 3, pr13 seed 7 and c201 seed 1 with the rewritten code gave "
-            "the same rules, training and test scores, tree sizes and operator counts.",
-            "- Each row of `all40.csv` records the points used, the truncation setting, hashes of the input file "
-            "and code, and the test seed and sample count."]
+    out += ["Checked by `src/reproduction_report.py` each time this record is generated:", ""]
+    out += [f"- {line}" for line in checks]
+    out += ["", "Other checks, not run by this script:", ""]
+    out += ["- `tests/test_toptw.py`, run with `python3 -m pytest tests -q`: hand-built cases; ties and "
+            "non-finite priorities; fresh fitness for every individual each generation; grown and initial "
+            "tree shapes and the depth limit; and a recomputation of 1,080 routes outside the simulator, in "
+            "which every selection satisfied the paper's expected-duration feasibility conditions, each point "
+            "was visited once and scores agreed. Realised sampled durations may exceed the nominal return "
+            "budget, as in the paper.",
+            "- Earlier record, no log kept: on 2026-11-10, with code 3b25478088, a run repeated with the same "
+            "seed gave the same rule and test score."]
     return out
+
+
+def verify(paper, results):
+    """Checks on the results file before anything is written. Returns them as lines of the record."""
+    expected = set(paper.index)
+    assert set(results.instance) == expected, "the results must cover exactly the instances of Table III"
+    assert not results.duplicated(["instance", "seed"]).any()
+    for name, runs in results.groupby("instance"):
+        assert sorted(runs.seed) == list(range(30)), name
+    assert (results.max_points == MAX_POINTS).all()
+    assert (results.test_seed == TEST_SEED).all() and (results.test_samples == TEST_SAMPLES).all()
+    for name, runs in results.groupby("instance"):
+        assert (runs.input_sha1 == fingerprint(f"data/toptw/{name}.txt")).all(), name
+    assert results.code_sha1.nunique() == 1
+    run_code = results.code_sha1.iloc[0]
+    current_code = fingerprint("src/toptw.py", "src/single_gphh.py")
+
+    regression = pd.read_csv(FOLDER / "regression_check.csv", dtype=HASHES).set_index(["instance", "seed"])
+    recorded = results.set_index(["instance", "seed"]).loc[regression.index]
+    for column in SAME_RUN:
+        if column == "rule":
+            assert (regression[column] == recorded[column]).all(), column
+        else:
+            assert np.allclose(regression[column], recorded[column], rtol=0, atol=1e-9), column
+    regression_code = regression.code_sha1.iloc[0]
+    assert (regression.code_sha1 == current_code).all(), "regression_check.csv must come from the current code"
+    pairs = ", ".join(sorted(regression.index.get_level_values(0).unique()))
+    seeds = sorted(regression.index.get_level_values(1).unique())
+
+    return [f"The results cover exactly the {len(expected)} instances of Table III, each with 30 runs, "
+            f"seeds 0 to 29 and no duplicates.",
+            f"Every run used max_points = {MAX_POINTS}, test seed {TEST_SEED} and {TEST_SAMPLES} test samples; "
+            f"each instance file still has the hash recorded with its runs.",
+            f"All runs were made by one code version, {run_code}. The current code is {current_code}.",
+            f"`regression_check.csv` holds {len(regression)} runs ({pairs}; seeds "
+            f"{', '.join(str(s) for s in seeds)}) made with code {regression_code}. They give the same rules, "
+            f"training and test scores, tree sizes and operator counts as the matching runs above."]
 
 
 # ---------------------------------------------------------------------- #
@@ -204,17 +250,15 @@ def record(table, results, main, supplement, truncated):
 
 def main():
     paper = published_table()
-    results = pd.read_csv(FOLDER / "all40.csv")
-    # Every instance has its 30 runs, all from the same code.
-    assert results.groupby("instance").seed.nunique().eq(30).all()
-    assert results.code_sha1.nunique() == 1
+    results = pd.read_csv(FOLDER / "all40.csv", dtype=HASHES)
+    checks = verify(paper, results)
 
     table = compare(paper, results)
     is_pr = table.instance.str.startswith("pr")
     main_part, supplement = table[~is_pr], table[is_pr]
     truncated = [name for name in paper.index if len(load_instance(f"data/toptw/{name}.txt").score) - 1 > MAX_POINTS]
 
-    lines = record(table, results, main_part, supplement, truncated)
+    lines = record(table, results, main_part, supplement, truncated, checks)
     (FOLDER / "reproduction.md").write_text("\n".join(lines) + "\n")
     print(f"{len(table)} instances; mean {table['diff %'].mean():.3f}; "
           f"within 2.5%: {(table['diff %'].abs() <= 2.5).sum()}; below {(table['diff %'] < 0).sum()}")

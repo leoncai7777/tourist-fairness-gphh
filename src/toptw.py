@@ -41,8 +41,9 @@ class Instance:
 def load_instance(path, max_points=None):
     """Point 0 is both the start and the end. Distances are Euclidean, rounded down to one
     decimal for Solomon-type instances and two for Cordeau-type (pr) instances.
-    max_points keeps only the first points after the start: Table III of Mei and Zhang (2018)
-    matches the first 100 points of the larger pr instances, not the full files."""
+    max_points keeps only the first points after the start. In this reconstruction, the first 100
+    candidate points of the larger pr instances gave closer agreement with Table III of Mei and Zhang
+    (2018) than the full files; the authors' own input construction is not confirmed."""
     path = Path(path)
     lines = [line.split() for line in path.read_text().splitlines() if line.strip()]
     rows = lines[2:]  # the first two lines are a header

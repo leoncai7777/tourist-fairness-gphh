@@ -15,7 +15,7 @@ from deap import gp
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import single_gphh as s  # noqa: E402
-from toptw import Instance, load_instance, protected_div, sample_durations, solve, sos, sot  # noqa: E402
+from toptw import Instance, counters, load_instance, protected_div, sample_durations, solve, sos, sot  # noqa: E402
 
 BENCHMARKS = Path(__file__).resolve().parents[1] / "data" / "toptw"
 
@@ -76,6 +76,18 @@ def test_sampled_duration_moves_the_clock_but_not_feasibility():
     long_first = instance.duration.copy()
     long_first[1] = 60.0
     assert solve(instance, nearest, long_first)[1] == [1]
+
+
+def test_ties_go_to_the_earliest_point():
+    instance = line_instance()
+    assert solve(instance, lambda score, *rest: np.zeros(score.size), instance.duration)[1] == [1, 2]
+
+
+def test_non_finite_priorities_are_set_to_zero_and_counted():
+    instance = line_instance()
+    counters["non_finite"] = 0
+    stops = solve(instance, lambda score, *rest: np.full(score.size, np.nan), instance.duration)[1]
+    assert stops == [1, 2] and counters["non_finite"] == 3  # two candidates, then one
 
 
 def test_protected_division_and_handwritten_rules():
@@ -147,3 +159,16 @@ def test_offspring_never_exceed_the_depth_limit():
     for individual in population:
         individual.fitness.values = (random.random(),)
     assert max(x.height for x in s.breed(population)) <= s.MAX_HEIGHT
+
+
+def test_every_individual_is_scored_afresh_each_generation():
+    """Elites included: no fitness from an earlier sample may carry over."""
+    random.seed(6)
+    instance = line_instance()
+    population = [s.toolbox.individual() for _ in range(30)]
+    s.evaluate(population, instance, instance.duration)
+    offspring = s.breed(population)
+    longer = instance.duration * 20
+    s.evaluate(offspring, instance, longer)
+    for individual in offspring:
+        assert individual.fitness.values[0] == solve(instance, gp.compile(individual, s.pset), longer)[0]
