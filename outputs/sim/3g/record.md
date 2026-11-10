@@ -46,7 +46,7 @@ Replay is the observed day. Every other row is one run (replicate 0). R_v is ove
 | 2019-04-26 | corrected | POP | 0.823 | 0.267 | 0.1% | 0.667 | 98.0% | 68 | 0.04 |
 | 2019-04-26 | corrected | LEAST | 0.166 | -0.754 | 37.8% | 0.087 | 95.1% | 157 | 0.04 |
 | 2019-04-26 | corrected | SOT | 0.703 | -0.022 | 11.2% | 0.639 | 99.0% | 36 | 0.07 |
-| 2019-04-26 | corrected | SOS | 0.805 | 0.238 | 0.4% | 0.654 | 98.5% | 54 | 0.06 |
+| 2019-04-26 | corrected | SOS | 0.805 | 0.238 | 0.4% | 0.654 | 98.5% | 54 | 0.07 |
 | 2019-04-26 | span | observed order | 0.897 | 0.718 | 0.0% | 0.399 | 94.4% | 187 | 0.05 |
 | 2019-04-26 | span | POP | 0.833 | 0.289 | 0.0% | 0.667 | 96.6% | 109 | 0.04 |
 | 2019-04-26 | span | LEAST | 0.196 | -0.716 | 37.3% | 0.079 | 93.8% | 183 | 0.04 |
@@ -85,7 +85,7 @@ Means over the five pilot days, corrected budget. The policy share is the state 
 | observed order | 0.019 | 22% |
 | POP | 0.016 | 16% |
 | LEAST | 0.016 | 18% |
-| SOT | 0.028 | 45% |
+| SOT | 0.029 | 44% |
 | SOS | 0.027 | 46% |
 
 ## 4. A common lower bound on the usual peak

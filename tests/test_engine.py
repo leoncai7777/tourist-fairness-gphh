@@ -306,9 +306,8 @@ def test_load_day_refuses_what_it_cannot_build():
         load_day("2019-02-30")  # not a date at all
     with pytest.raises(ValueError):
         load_day("2020-06-01")  # no tables for that year
-    if (PROCESSED / "visits_2023.csv.gz").exists():
-        with pytest.raises(ValueError):
-            load_day("2023-06-01")  # the 2023 tables stop at February
+    with pytest.raises(ValueError):
+        load_day("2019-12-25")  # no visits recorded that day
     with pytest.raises(ValueError):
         load_day("2019-10-09", follows=["no such card"])
     one_stop = load_day("2019-10-09").visitors
