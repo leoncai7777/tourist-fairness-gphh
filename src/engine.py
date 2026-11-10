@@ -29,6 +29,7 @@ engine.state, which can lag by one event at the same time.
 Usage:  run = simulate(load_day("2019-10-09"), Nearest())
 """
 
+import hashlib
 import heapq
 from dataclasses import dataclass, field
 
@@ -233,6 +234,13 @@ class Engine:
                 f"inside {self.inside.tolist()}  on the way {self.on_the_way.tolist()}")
 
 
+def followers_id(day):
+    """Who follows, as a count and a short hash of their visitor ids, so that runs with different
+    compliance sets are never mixed up."""
+    ids = sorted(day.visitors["visitor"][day.visitors["follows"]].astype(str))
+    return f"{len(ids)}:{hashlib.sha1(','.join(ids).encode()).hexdigest()[:10]}"
+
+
 def simulate(day: Day, policy, replicate: int = 0, stays: np.ndarray | None = None, stop_limit: bool = True,
              trace: bool = False, check: bool = False) -> DayRun:
     """One day. stays overrides the drawn table (for hand-built tests). policy follows the contract
@@ -245,7 +253,8 @@ def simulate(day: Day, policy, replicate: int = 0, stays: np.ndarray | None = No
     if not np.isfinite(stays).all() or (stays < MIN_STAY).any():
         raise ValueError(f"stays must be finite and at least {MIN_STAY:g} minute")
     run = Engine(day, policy, stays, stop_limit, trace, check).simulate()
-    run.settings = {"date": f"{day.date:%Y-%m-%d}", "policy": type(policy).__name__, "replicate": replicate,
+    run.settings = {"date": f"{day.date:%Y-%m-%d}", "policy": getattr(policy, "name", type(policy).__name__),
+                    "replicate": replicate, "followers": followers_id(day),
                     "stays given": given, "stop_limit": stop_limit, **day.options,
                     "data_version": day.data_version}
     return run

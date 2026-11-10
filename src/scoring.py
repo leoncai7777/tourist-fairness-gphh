@@ -79,7 +79,13 @@ def new_route(day, run, k):
 
 def score_day(day, run, observed, alpha, beta):
     """One row per evaluated visitor: the parts of the new and the observed route, V, R_v,
-    stops and how the route ended; and G_hat of the day. observed is replay(day)."""
+    stops and how the route ended; and G_hat of the day. observed is replay() of the same date,
+    data and usual peaks; who follows and the budget may differ, as they do not change the baseline."""
+    same = (observed.date == day.date and observed.data_version == day.data_version
+            and np.array_equal(observed.usual_peak, day.usual_peak)
+            and np.array_equal(observed.visitor_ids, day.visitors["visitor"].to_numpy()))
+    if not same:
+        raise ValueError("the observed baseline belongs to another day, data version or usual peak")
     site, start, end = (np.array(column, float) for column in zip(*run.intervals))
     c = crowding(hourly_person_minutes(site.astype(int), start, end, len(day.site_ids)), day.usual_peak)
     overruns = pd.Series([k for k, _, _ in run.overruns]).value_counts()

@@ -207,6 +207,7 @@ def test_a_run_keeps_its_settings():
     day = hand_day([{"route": [0, 1], "entries": [600, 650]}])
     run = simulate(day, Nearest(), replicate=3, stop_limit=False)
     assert run.settings["policy"] == "Nearest" and run.settings["replicate"] == 3
+    assert run.settings["followers"].startswith("1:")
     assert run.settings["stop_limit"] is False and run.settings["stays given"] is False
 
 

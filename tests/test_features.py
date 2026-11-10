@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from day import PROCESSED, load_day  # noqa: E402
 from engine import Nearest, ObservedOrder, simulate, stay_table  # noqa: E402
-from features import (H1_TERMINALS, H2_TERMINALS, best, finite, h1_inputs, h2_inputs,  # noqa: E402
-                      log_decision, visit_share)
+from features import (H1_TERMINALS, H2_TERMINALS, best, choose_site, finite, h1_inputs,  # noqa: E402
+                      h2_inputs, visit_share)
 from test_engine import hand_day, stays  # noqa: E402
 
 needs_data = pytest.mark.skipif(not (PROCESSED / "manifest.json").exists(), reason="processed tables not built")
@@ -269,9 +269,7 @@ class Fair:
         h1_values = dict(zip(H1_TERMINALS, h1_inputs(engine, k, candidates)))
         h1 = h1_values["AV"] - h1_values["TA"] / 100
         vs = visit_share(engine, candidates)
-        if self.log:
-            return log_decision(engine, k, candidates, h1, 0.5, vs, h2_inputs(engine, k))
-        return best(engine, candidates, h1 - 0.5 * vs)
+        return choose_site(engine, k, candidates, h1, 0.5, vs, h2_inputs(engine, k), log=self.log)
 
 
 @needs_data
@@ -287,6 +285,41 @@ def test_shadow_choice_changes_neither_routes_nor_random_numbers():
     assert set(H2_TERMINALS) <= set(row) and row["changed"] == (row["j0"] != row["jw"])
     changed = [r for r in with_log.decisions if r["changed"]]
     assert changed and all(r["h1 given up"] >= 0 for r in with_log.decisions)
+
+
+class Extreme:
+    """Gives fixed h1 values and w to choose_site, with the real VS."""
+    def __init__(self, h1, w, log):
+        self.h1, self.w, self.log = h1, w, log
+
+    def choose(self, engine, k, candidates):
+        vs = visit_share(engine, candidates)
+        return choose_site(engine, k, candidates, self.h1, self.w, vs, log=self.log)
+
+
+def run_extreme(h1, w, log):
+    # v0 chooses at 640 between sites 1 and 2; x = (1, 0, 1), so VS = (0, 1.5).
+    day = hand_day([{"route": [0, 1], "entries": [600, 650]},
+                    {"route": [2], "entries": [620], "follows": False, "exits": [630]}])
+    return simulate(day, Extreme(h1, w, log), stays=stays([[40, 25, 15], [9, 9, 9]]))
+
+
+def test_an_overflowing_priority_is_cleaned_and_logged_as_chosen():
+    # Finite outputs, but -1e308 - 1e308 * 1.5 overflows to -inf at site 2. It is set to 0 and counted
+    # (protocol section 5), so site 2 (0) beats site 1 (-1e308); the log records the same choice.
+    with_log, without = run_extreme([-1e308, -1e308], 1e308, True), run_extreme([-1e308, -1e308], 1e308, False)
+    assert with_log.routes == without.routes and with_log.routes[0][1][0] == 2
+    assert with_log.decisions[0]["jw"] == 2 and with_log.fallbacks == {"priority: not finite": 1}
+
+
+def test_non_finite_rule_outputs_are_cleaned_before_the_priority():
+    # NaN at every site would leave no maximum; cleaned to 0, then VS decides: site 1 (VS 0).
+    run = run_extreme([np.nan, np.nan], 1.0, True)
+    assert run.routes[0][1][0] == 1 and run.fallbacks == {"h1: not finite": 2}
+    # A negative or non-finite w is cut to 0 or set to 0, so only h1 decides.
+    for w in (-5.0, np.nan):
+        run = run_extreme([1.0, 2.0], w, True)
+        assert run.decisions[0]["w"] == 0 and run.decisions[0]["changed"] is False and run.routes[0][1][0] == 2
 
 
 # ---------------------------------------------------------------------- #

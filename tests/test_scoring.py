@@ -97,6 +97,27 @@ def test_completion_is_pooled_over_visitors():
 
 
 @needs_data
+def test_a_baseline_from_another_day_or_peak_is_refused():
+    day = load_day("2019-10-09")
+    run = simulate(day, Nearest())
+    for other in (load_day("2019-10-10"), load_day("2019-10-09", peak_floor=10.0)):
+        with pytest.raises(ValueError):
+            score_day(day, run, replay(other), 0.25, 0.5)
+    # Who follows and the budget do not change the baseline, so they may differ.
+    span = load_day("2019-10-09", budget="span", follows=[])
+    score_day(span, simulate(span, Nearest()), replay(day), 0.25, 0.5)
+
+
+@needs_data
+def test_compliance_sets_are_told_apart():
+    day = load_day("2019-10-09")
+    half = day.visitors["visitor"][day.visitors["evaluated"]].iloc[::2]
+    other = day.visitors["visitor"][day.visitors["evaluated"]].iloc[1::2]
+    ids = {simulate(load_day("2019-10-09", follows=f), Nearest()).settings["followers"] for f in (half, other, None)}
+    assert len(ids) == 3
+
+
+@needs_data
 def test_with_no_followers_every_r_v_is_one_and_g_hat_is_observed():
     day = load_day("2019-10-09", follows=[])
     run = simulate(day, Nearest())

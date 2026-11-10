@@ -252,7 +252,7 @@ def engine_training_days():
         "is one visit past closing or past the budget; one visit can give both.")
     for name in totals:
         counts = ", ".join(f"{key} {value:,}" for key, value in sorted(totals[name].items()))
-        say(f"- {name}: completion {stops[name][0] / stops[name][1]:.1%}; {counts}; "
+        say(f"- {name}: completion pooled over all days {stops[name][0] / stops[name][1]:.1%}; {counts}; "
             f"{seconds[name] / len(dates) * 1000:.0f} ms per day")
     say()
 
@@ -338,6 +338,7 @@ def scoring_on_training_days():
     days = pd.read_csv(PROCESSED / "days_2019.csv", parse_dates=["date"])
     dates = days["date"][days["split"] == "train"]
     worst, results = 0.0, {"observed order": [], "nearest": []}
+    pooled = {name: [0, 0] for name in results}
     for date in dates:
         observed = replay(load_day(date))
         background = load_day(date, follows=[])
@@ -350,14 +351,17 @@ def scoring_on_training_days():
             out = summary(v, ALPHA, BETA)["all"]
             assert out["split adds up"] and len(v) == day.visitors["evaluated"].sum()
             results[name].append((out["mean R_v"], g_hat, out["completion"]))
+            pooled[name][0] += v["stops"].sum()
+            pooled[name][1] += v["observed stops"].sum()
     assert worst < 1e-12
     say(f"- With no followers, on every day: largest |R_v - 1| {worst:.1e}, hourly crowding equal to the replay's, "
         f"G_hat equal to the observed one (assertions).")
     say("- On every day the change of V equals change of A - alpha x change of C - beta x change of T (assertion).")
     for name, rows in results.items():
         r, g, done = np.array(rows).T
-        say(f"- {name}: mean R_v {r.mean():.3f} (days from {r.min():.3f} to {r.max():.3f}), "
-            f"G_hat {g.mean():.3f}, completion {done.mean():.1%}")
+        say(f"- {name}, means of the daily values: mean R_v {r.mean():.3f} (days from {r.min():.3f} to {r.max():.3f}), "
+            f"G_hat {g.mean():.3f}, completion {done.mean():.1%}; completion pooled over all days "
+            f"{pooled[name][0] / pooled[name][1]:.1%}")
     say()
 
 

@@ -107,15 +107,23 @@ def best(engine, candidates, scores):
     return top[np.argmin(engine.day.site_ids[top])]
 
 
-def log_decision(engine, k, candidates, h1, w, vs, h2):
-    """One row of the RQ2 decision log: the choice with and without the fairness term. j0 is a
-    shadow choice: it is never acted on and changes nothing."""
-    j0 = best(engine, candidates, h1)
-    jw = best(engine, candidates, h1 - w * vs)
-    position = {j: i for i, j in enumerate(candidates)}
-    row = {"visitor": k, "time": engine.now, "candidates": len(candidates), "j0": int(j0), "jw": int(jw),
-           "changed": bool(j0 != jw), "VS change": vs[position[jw]] - vs[position[j0]],
-           "h1 given up": h1[position[j0]] - h1[position[jw]], "w": w}
-    row.update(zip(H2_TERMINALS, h2) if h2 is not None else [])
-    engine.run.decisions.append(row)
+def choose_site(engine, k, candidates, h1, w, vs, h2=None, log=False):
+    """The one path from a rule's outputs to a site, for every form of w: h1 and w are cleaned,
+    w is cut at 0, the priority h1 - w * VS is cleaned again, then the tie rule. With log on,
+    one row of the RQ2 decision log is kept from the same numbers; j0, the choice without the
+    fairness term, is a shadow choice: never acted on, it changes nothing."""
+    h1 = finite(engine, np.broadcast_to(np.asarray(h1, float), candidates.shape), "h1")
+    w = max(0.0, float(finite(engine, w, "w")))
+    with np.errstate(over="ignore", invalid="ignore"):
+        priority = h1 - w * vs
+    priority = finite(engine, priority, "priority")
+    jw = best(engine, candidates, priority)
+    if log:
+        j0 = best(engine, candidates, h1)
+        position = {j: i for i, j in enumerate(candidates)}
+        row = {"visitor": k, "time": engine.now, "candidates": len(candidates), "j0": int(j0), "jw": int(jw),
+               "changed": bool(j0 != jw), "VS change": vs[position[jw]] - vs[position[j0]],
+               "h1 given up": h1[position[j0]] - h1[position[jw]], "w": w}
+        row.update(zip(H2_TERMINALS, h2) if h2 is not None else [])
+        engine.run.decisions.append(row)
     return jw

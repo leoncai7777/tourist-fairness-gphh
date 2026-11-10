@@ -12,7 +12,9 @@ Section 9 of simulator_design.md. On each pilot day:
   3. where the time goes: the engine (events, heap, feasibility) against the
      policy (state inputs and the rule);
   4. a common lower bound on the usual peak (a sensitivity option, off by
-     default), for the supervisor meeting; no bound is chosen here.
+     default); no bound is chosen here;
+  5. where the change of route value comes from: attractiveness, crowding
+     and walking, for all visitors and for the worst tenth.
 
 Scores use alpha = 0.25 and beta = 0.5, over all evaluated visitors.
 
@@ -53,6 +55,7 @@ class Timed:
     def __init__(self, inner):
         self.inner, self.seconds = inner, 0.0
         self.may_stop = getattr(inner, "may_stop", False)
+        self.name = getattr(inner, "name", type(inner).__name__)
 
     def reset(self):
         if hasattr(self.inner, "reset"):
@@ -90,7 +93,7 @@ def scenarios():
     say()
     say("| Date | Budget | Policy | Mean R_v | p10 R_v | R_v < 0 | G_hat | Completion | Ended early | Seconds |")
     say("|---|---|---|---|---|---|---|---|---|---|")
-    timing = {name: [0.0, 0.0, 0] for name in POLICIES}
+    timing = {name: [0.0, 0.0, 0, 0.0] for name in POLICIES}
     for date in PILOT_DAYS:
         for budget in ("corrected", "span"):
             day = load_day(date, budget=budget)
@@ -106,6 +109,7 @@ def scenarios():
                     timing[name][0] += seconds
                     timing[name][1] += policy_seconds
                     timing[name][2] += 1
+                    timing[name][3] = max(timing[name][3], seconds)
                 say(f"| {date} | {budget} | {name} | {out['mean R_v']:.3f} | {v['R_v'].quantile(0.1):.3f} | "
                     f"{(v['R_v'] < 0).mean():.1%} | {g_hat:.3f} | {out['completion']:.1%} | "
                     f"{out['ended early']:,} | {seconds:.2f} |")
@@ -147,13 +151,14 @@ def replicates():
 def time_per_day(timing):
     say("## 3. Time per day")
     say()
-    say("Means over the five pilot days, corrected budget. The policy share is the state inputs and the rule; the "
-        "rest is the engine (events, heap, feasibility). A GP tree replaces the rule in Step 4.")
+    say("The simulation of one day with a hand rule, corrected budget, five pilot days. Not included: scoring "
+        "(score_day), h2 and a GP tree; the Step 4 pilot times a whole evaluation. The policy share is the state "
+        "inputs and the rule; the rest is the engine (events, heap, feasibility).")
     say()
-    say("| Policy | Seconds per day | Policy share |")
-    say("|---|---|---|")
-    for name, (seconds, policy_seconds, n) in timing.items():
-        say(f"| {name} | {seconds / n:.3f} | {policy_seconds / seconds:.0%} |")
+    say("| Policy | Mean seconds per day | Most seconds in a day | Policy share |")
+    say("|---|---|---|---|")
+    for name, (seconds, policy_seconds, n, most) in timing.items():
+        say(f"| {name} | {seconds / n:.3f} | {most:.3f} | {policy_seconds / seconds:.0%} |")
     say()
 
 
@@ -184,6 +189,38 @@ def peak_floor():
     say()
 
 
+# ---------------------------------------------------------------------- #
+# 5. Where the change of value comes from
+# ---------------------------------------------------------------------- #
+
+def parts(g):
+    return (f"{(g['V'] - g['V observed']).mean():.3f} | {g['change A'].mean():.3f} | "
+            f"{-ALPHA * g['change C'].mean():.3f} | {-BETA * g['change T'].mean():.3f}")
+
+
+def where_the_change_comes_from():
+    say("## 5. Where the change of route value comes from")
+    say()
+    say("Change of V = change of A - alpha x change of C - beta x change of T, as means over the evaluated visitors "
+        "and over the worst tenth by R_v; lost stops show in A. Highest C: the site and hour with the highest hourly "
+        "crowding of the run, with its usual peak.")
+    say()
+    say("| Date | Policy | All: change V | A | -alpha C | -beta T | Worst tenth: change V | A | -alpha C | -beta T "
+        "| Highest C |")
+    say("|---|---|---|---|---|---|---|---|---|---|---|")
+    for date in ("2019-10-09", "2019-04-26"):
+        day = load_day(date)
+        observed = replay(day)
+        for name in POLICIES:
+            run = simulate(day, POLICIES[name]())
+            v, _, c = score_day(day, run, observed, ALPHA, BETA)
+            worst = v[v["R_v"] <= v["R_v"].quantile(0.1)]
+            i, hour = np.unravel_index(np.argmax(c), c.shape)
+            say(f"| {date} | {name} | {parts(v)} | {parts(worst)} | {c[i, hour]:.1f} at site {day.site_ids[i]}, "
+                f"{hour}:00 (usual peak {day.usual_peak[i]:.1f}) |")
+    say()
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     code = fingerprint("src/day.py", "src/engine.py", "src/features.py", "src/rules.py", "src/scoring.py")
@@ -197,6 +234,7 @@ def main():
     replicates()
     time_per_day(timing)
     peak_floor()
+    where_the_change_comes_from()
     (OUT / "record.md").write_text("\n".join(lines) + "\n")
 
 

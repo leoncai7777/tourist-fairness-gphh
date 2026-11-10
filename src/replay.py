@@ -26,6 +26,11 @@ class Replay:
     person_minutes: np.ndarray   # sites x 24 hours
     crowding: np.ndarray         # sites x 24 hours
     baseline: pd.DataFrame       # one row per evaluated visitor: A, C, T
+    # What the baseline belongs to; score_day() refuses a day that does not match.
+    date: pd.Timestamp
+    data_version: str
+    usual_peak: np.ndarray       # with any lower bound applied: it changes C and so the baseline
+    visitor_ids: np.ndarray      # visitor id of each visitor index
 
 
 def replay(day):
@@ -42,7 +47,8 @@ def replay(day):
         rows.append((k, a, c_sum, t))
     baseline = pd.DataFrame(rows, columns=["visitor", "A", "C", "T"]).set_index("visitor")
     assert (baseline["A"] > 0).all(), "R_v divides by the sum of A on the observed route"
-    return Replay(entries_per_site, person_minutes, c, baseline)
+    return Replay(entries_per_site, person_minutes, c, baseline, day.date, day.data_version, day.usual_peak,
+                  day.visitors["visitor"].to_numpy())
 
 
 def baseline_value(result, alpha, beta):

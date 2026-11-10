@@ -106,6 +106,11 @@ MUTATIONS = [
      "LEAST takes the most visited site"),
     ("src/rules.py", "protected_div(engine.day.attractiveness[candidates], inputs[TA])",
      "protected_div(engine.day.attractiveness[candidates], inputs[SL])", "SOT divides by the slack"),
+    ("src/features.py", 'priority = finite(engine, priority, "priority")', "priority = priority",
+     "final priority not cleaned"),
+    ("src/features.py", 'w = max(0.0, float(finite(engine, w, "w")))', 'w = float(finite(engine, w, "w"))',
+     "negative w not cut at 0"),
+    ("src/scoring.py", "    if not same:\n", "    if False:\n", "a baseline from another day accepted"),
     ("src/toptw.py", "feasible &= np.maximum(arrive, instance.opening) + expected + back <= end_time",
      "feasible &= arrive + expected + back <= end_time", "Step 1: no wait for opening"),
 ]
