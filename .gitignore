@@ -217,6 +217,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Derived tables, rebuilt by src/preprocess.py; those of 2022-23 come from data with no stated licence
+data/verona/processed/
 # VeronaCard 2022 and 2023: data licence not stated, keep local only
 data/verona/veronacard_2022_original.csv
 data/verona/data_2023.csv

@@ -27,7 +27,7 @@ Quick numbers (computed with pandas from these files):
 
 2022 has three attractions not in 2019: Eataly Verona, Museo Nazionale, Palazzo Maffei Casa Museo. January to May 2022 is still below 2019 (COVID), from June it is at or above 2019 levels.
 
-Limits: only card holders (mostly culture-focused visitors); entries only, no exit times, so stay times come from the attraction list; capacity is missing or doubtful for several sites.
+Limits: only card holders (mostly culture-focused visitors); entries only, no exit times, so stay times are inferred from the gaps between entries (`src/preprocess.py`); capacity is missing or doubtful for several sites.
 
 Please cite: Comune di Verona (open data, 2019); Migliorini, Carra and Belussi (2021), IEEE TETC 9(4):1765-1779, doi 10.1109/TETC.2019.2920484; Dalla Vecchia et al. (2024), Information Technology & Tourism 26(3):449-484, doi 10.1007/s40558-024-00288-x.
 

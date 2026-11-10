@@ -46,7 +46,7 @@ VeronaCard, Verona's city pass: every attraction entry with its time, for 2019 (
 | Folder | Content |
 |---|---|
 | `data/` | Datasets and their sources (`data/README.md`) |
-| `src/` | Code, run from the repository root: `eda.py` (data exploration); `toptw.py`, `single_gphh.py`, `reproduction_report.py` (the single-tourist reproduction) |
+| `src/` | Code, run from the repository root: `preprocess.py` (data preparation, writes `data/verona/processed/`, not committed), `eda.py` (data exploration); `toptw.py`, `single_gphh.py`, `reproduction_report.py` (the single-tourist reproduction) |
 | `tests/` | Tests: `python3 -m pytest tests -q` |
 | `configs/` | Experiment settings (to come) |
 | `outputs/` | Results: `eda/` (summary and figures), `toptw/` (reproduction) |
