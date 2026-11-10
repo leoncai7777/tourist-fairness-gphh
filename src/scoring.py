@@ -12,12 +12,15 @@ scored, where it is turned into hours once.
 import numpy as np
 
 HOURS = 24
+DAY_END = 60 * HOURS  # a one-day model: nothing may start or end after midnight
 
 
 def hourly_person_minutes(site, start, end, n_sites):
     """Person-minutes at each site in each clock hour, from occupancy intervals [start, end].
     Intervals are not cut at any closing time; a zero-length interval adds nothing."""
     site, start, end = np.asarray(site), np.asarray(start, float), np.asarray(end, float)
+    if (start < 0).any() or (end > DAY_END).any():
+        raise ValueError("an occupancy interval falls outside the day; it would be cut silently")
     minutes = np.zeros((n_sites, HOURS))
     for hour in range(HOURS):
         overlap = np.minimum(end, 60 * (hour + 1)) - np.maximum(start, 60 * hour)
@@ -33,7 +36,10 @@ def crowding(person_minutes, usual_peak):
 def route_parts(sites, starts, c, attractiveness, walk):
     """A, C and T of one route. C is read for the hour in which each visit starts; T is in hours."""
     sites = np.asarray(sites)
-    hours = (np.asarray(starts, float) // 60).astype(int)
+    starts = np.asarray(starts, float)
+    if (starts < 0).any() or (starts >= DAY_END).any():
+        raise ValueError("a visit starts outside the day")
+    hours = (starts // 60).astype(int)
     a = attractiveness[sites].sum()
     c_sum = c[sites, hours].sum()
     t = walk[sites[:-1], sites[1:]].sum() / 60

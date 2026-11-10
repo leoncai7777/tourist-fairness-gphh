@@ -145,6 +145,14 @@ def fixed_intervals(visits, sites, number, index_of):
                          "exit": intervals.exit.to_numpy(float)})
 
 
+def fixed_array(values):
+    """A read-only copy: static inputs are shared through the table cache and must not be
+    changed by the engine, which keeps its own running state."""
+    array = np.array(values, float)
+    array.flags.writeable = False
+    return array
+
+
 def load_day(date, year=None, follows=None, budget="corrected", same_day=False):
     """One day. budget is "corrected" (main) or "span" (the uncorrected sensitivity run);
     same_day switches availability to the sites with entries that day."""
@@ -170,12 +178,13 @@ def load_day(date, year=None, follows=None, budget="corrected", same_day=False):
 
     day_type = "monday" if date.dayofweek == 0 else "other"
     opening, closing = month_hours(tables["hours"], sites, date.month)
-    return Day(date=date, day_type=day_type, site_ids=site_ids,
-               available=availability(tables, date, site_ids, same_day, visits),
-               attractiveness=sites.A.to_numpy(float), stay=sites.d.to_numpy(float),
-               usual_peak=sites.usual_peak.to_numpy(float), opening=opening, closing=closing,
-               walk=walking_matrix(tables["walk"], site_ids),
-               usual_gday=usual_curve(tables["usual_gday"], "usual_gday", day_type),
-               usual_arrivals=usual_curve(tables["usual_arrivals"], "usual_arrivals", day_type),
+    available = availability(tables, date, site_ids, same_day, visits)
+    available.flags.writeable = False
+    return Day(date=date, day_type=day_type, site_ids=site_ids, available=available,
+               attractiveness=fixed_array(sites.A), stay=fixed_array(sites.d),
+               usual_peak=fixed_array(sites.usual_peak), opening=fixed_array(opening),
+               closing=fixed_array(closing), walk=fixed_array(walking_matrix(tables["walk"], site_ids)),
+               usual_gday=fixed_array(usual_curve(tables["usual_gday"], "usual_gday", day_type)),
+               usual_arrivals=fixed_array(usual_curve(tables["usual_arrivals"], "usual_arrivals", day_type)),
                visitors=visitors, routes=routes, entries=entries, fixed=fixed,
                data_version=tables["version"])

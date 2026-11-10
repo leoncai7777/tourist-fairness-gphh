@@ -126,6 +126,30 @@ def test_pilot_days_match_the_tables():
         assert replay(day).entries_per_site.sum() == visits
 
 
+def test_times_outside_the_day_are_refused():
+    with pytest.raises(ValueError):
+        hourly_person_minutes([0], [1400.0], [1450.0], 1)  # would be cut at midnight
+    with pytest.raises(ValueError):
+        route_parts([0], [1440.0], np.zeros((1, 24)), np.ones(1), np.zeros((1, 1)))
+
+
+@needs_data
+def test_entries_per_site_follow_the_site_ids():
+    day = load_day("2019-10-09")
+    visits = pd.read_csv(PROCESSED / "visits_2019.csv.gz", parse_dates=["date"])
+    observed = visits[visits.date == pd.Timestamp("2019-10-09")].site.value_counts()
+    observed = observed.reindex(day.site_ids, fill_value=0).to_numpy()
+    assert (replay(day).entries_per_site == observed).all()
+
+
+@needs_data
+def test_static_inputs_are_read_only():
+    day = load_day("2019-10-09")
+    for array in (day.attractiveness, day.stay, day.usual_peak, day.opening, day.walk, day.available):
+        with pytest.raises(ValueError):
+            array[0] = array[0]
+
+
 @needs_data
 def test_options_for_the_sensitivity_runs():
     main = load_day("2019-06-03")
