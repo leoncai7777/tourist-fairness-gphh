@@ -79,11 +79,18 @@ def site_statistics(fit):
     return s
 
 
+def observed_occupancy_intervals(visits, d_i):
+    """One occupancy interval per observed entry: [entry, min(entry + d_i, next entry - walk)], never negative.
+    A last stop or one-stop visit stays d_i. The usual peak, the EDA and the replay all use this."""
+    out = visits[["visitor", "date", "site", "t", "next_site", "walk"]].rename(columns={"t": "entry"}).copy()
+    out["exit"] = np.fmin(visits.t + visits.site.map(d_i), visits.next_t - visits.walk).clip(lower=visits.t)
+    return out
+
+
 def usual_peak(fit, d_i):
     """People inside in an hour = person-minutes in that hour / 60. Each entry occupies [t, min(t + d_i, next entry - walk)].
     Usual peak = 95th percentile over (day, hour) pairs with at least one entry."""
-    f = fit[["date", "site", "t"]].copy()
-    f["end"] = np.fmin(f.t + f.site.map(d_i), fit.next_t - fit.walk).clip(lower=f.t)
+    f = observed_occupancy_intervals(fit, d_i).rename(columns={"entry": "t", "exit": "end"})
     peaks = {}
     entry_hour = f.t // 60
     for site, g in f.groupby("site"):
@@ -194,7 +201,7 @@ def day_table(d, opened):
     for date, x in counts.iterrows():
         sites_ = opened[date]
         rows.append((date, x.sum(), len(sites_), int((x[sites_] == 0).sum()), x.sum() - x[sites_].sum(),
-                     gini_hat(x[sites_].values), gini_hat(x[x > 0].values)))
+                     gini_hat(x[sites_].values), gini_hat(x[(x > 0) & ~x.index.isin(LOW_COVERAGE)].values)))
     return pd.DataFrame(rows, columns=["date", "visits", "open_sites", "open_with_no_visits", "visits_at_closed_sites",
                                        "G_hat", "G_hat_same_day"])
 
@@ -224,28 +231,44 @@ def budget_report(v, label):
                       "median_added": by_stops.apply(lambda a: a[a > 1e-9].median()).round(0)}).T.to_string())
 
 
-def usual_gday(fit, open_sites):
-    """Mean over training days of G_hat of the visits so far, by the end of each hour.
-    Mondays are kept apart, because fewer sites are available on them."""
+FIRST_MINUTE, LAST_MINUTE = 480, 1260  # 08:00 to 21:00
+
+
+def day_type_dates(fit):
+    """Training dates, Mondays apart: fewer sites are available on them."""
     dates = [pd.Timestamp(date) for date in fit.date.unique()]
+    return (("monday", [d for d in dates if d.dayofweek == 0]), ("other", [d for d in dates if d.dayofweek != 0]))
+
+
+def usual_gday(fit, open_sites):
+    """For each minute, the mean over training days of G_hat of the visits up to that minute. The denominator of GDAY."""
+    minutes = np.arange(FIRST_MINUTE, LAST_MINUTE + 1)
     rows = []
-    for day_type, chosen in (("monday", [d for d in dates if d.dayofweek == 0]), ("other", [d for d in dates if d.dayofweek != 0])):
-        for hour in range(8, 21):
-            so_far = fit[fit.t < 60 * (hour + 1)].groupby(["date", "site"]).size().to_dict()
-            values = [gini_hat([so_far.get((date, i), 0) for i in open_sites[date]]) for date in chosen]
-            rows.append((day_type, hour, np.nanmean(values)))
-    return pd.DataFrame(rows, columns=["day_type", "hour", "usual_gday"])
+    for day_type, chosen in day_type_dates(fit):
+        by_day = []
+        for date in chosen:
+            sites_ = open_sites[date]
+            part = fit[(fit.date == date) & fit.site.isin(sites_)]
+            counts = np.zeros((minutes.size, len(sites_)))
+            position = {site: i for i, site in enumerate(sites_)}
+            for t, site in zip(np.floor(part.t.values).astype(int), part.site.values):
+                counts[max(t - FIRST_MINUTE, 0), position[site]] += 1
+            by_day.append([gini_hat(row) for row in counts.cumsum(axis=0)])
+        rows.append(pd.DataFrame({"day_type": day_type, "minute": minutes, "usual_gday": np.nanmean(np.array(by_day), axis=0)}))
+    return pd.concat(rows, ignore_index=True)
 
 
 def usual_arrivals(fit):
-    """Mean entries at all sites in each clock hour of a training day, Mondays apart. The denominator of ARR."""
-    dates = [pd.Timestamp(date) for date in fit.date.unique()]
-    per_hour = fit.assign(hour=(fit.t // 60).astype(int)).groupby(["date", "hour"]).size().to_dict()
+    """For each minute, the mean over training days of the entries at all sites in the 60 minutes up to it. The denominator of ARR."""
+    minutes = np.arange(FIRST_MINUTE, LAST_MINUTE + 1)
     rows = []
-    for day_type, chosen in (("monday", [d for d in dates if d.dayofweek == 0]), ("other", [d for d in dates if d.dayofweek != 0])):
-        for hour in range(8, 21):
-            rows.append((day_type, hour, np.mean([per_hour.get((d, hour), 0) for d in chosen])))
-    return pd.DataFrame(rows, columns=["day_type", "hour", "usual_arrivals"])
+    for day_type, chosen in day_type_dates(fit):
+        by_day = []
+        for date in chosen:
+            t = np.floor(fit.t[fit.date == date].values)
+            by_day.append([((t > minute - 60) & (t <= minute)).sum() for minute in minutes])
+        rows.append(pd.DataFrame({"day_type": day_type, "minute": minutes, "usual_arrivals": np.mean(by_day, axis=0)}))
+    return pd.concat(rows, ignore_index=True)
 
 
 def file_hash(path):
@@ -365,7 +388,7 @@ def main():
     both = cards.map(lambda x: "test" in x and len(x) > 1)
     test_visitors = v19[v19.split == "test"].visitor.str.split("_").str[0]
     say(f"cards in both test and other days: {both.mean():.1%} of cards, {test_visitors.isin(both[both].index).mean():.1%} of test visitors")
-    say(gday.round(3).to_string(index=False))
+    say(gday[gday.minute % 60 == 0].round(3).to_string(index=False))
 
     # ---- save
     say()
@@ -382,7 +405,7 @@ def main():
     hours_table.round(2).to_csv(f"{OUT}/site_hours.csv", index=False)
     gday.round(4).to_csv(f"{OUT}/usual_gday.csv", index=False)
     arrivals.round(3).to_csv(f"{OUT}/usual_arrivals.csv", index=False)
-    columns = ["visitor", "date", "stop", "site", "t", "stay"]
+    columns = ["visitor", "date", "stop", "site", "t", "stay", "next_site", "next_t", "walk"]
     d19[columns + ["split"]].to_csv(f"{OUT}/visits_2019.csv.gz", index=False)
     d22[columns].to_csv(f"{OUT}/visits_2022.csv.gz", index=False)
     d23[columns].to_csv(f"{OUT}/visits_2023.csv.gz", index=False)

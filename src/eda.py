@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from preprocess import observed_occupancy_intervals
+
 ROOT = Path(__file__).resolve().parents[1]
 PROCESSED = ROOT / "data" / "verona" / "processed"  # made by src/preprocess.py
 OUT = ROOT / "outputs" / "eda"
@@ -70,6 +72,7 @@ walk_table = pd.read_csv(ROOT / "data" / "verona" / "poi_time_travel.csv")
 walk = {(a, b): t for a, b, t in zip(walk_table.poi_start, walk_table.poi_dest, walk_table.time_travel)}
 names = sites.name.to_dict()
 train = visits[visits.split == "train"].copy()
+train["end"] = observed_occupancy_intervals(train, sites.d).exit.values
 multi = visitors[visitors.stops >= 2]
 
 say("# VeronaCard EDA, aligned with the research design")
@@ -89,8 +92,8 @@ say()
 # ---- 2. split
 say("## 2. The split of the days")
 say()
-days["season"] = days.date.dt.month.map(lambda m: ["Summer", "Summer", "Autumn", "Autumn", "Autumn", "Winter", "Winter", "Winter",
-                                                   "Spring", "Spring", "Spring", "Summer"][m % 12])
+days["season"] = days.date.dt.month.map(lambda m: ["Winter", "Winter", "Winter", "Spring", "Spring", "Spring", "Summer", "Summer",
+                                                   "Summer", "Autumn", "Autumn", "Autumn"][m % 12])
 split_table = days.groupby("split").agg(days=("date", "size"), visits_per_day=("visits", "mean"), median_visits=("visits", "median"),
                                         busiest=("visits", "max"), G_hat=("G_hat", "median")).round(3)
 split_table[["visits_per_day", "median_visits"]] = split_table[["visits_per_day", "median_visits"]].round(0).astype(int)
@@ -115,8 +118,9 @@ site_table = pd.DataFrame({"site": sites.name, "A": sites.A.round(3), "stay d (m
                            "share of first stops": first.reindex(sites.index).fillna(0).mul(100).round(1)})
 site_table = site_table.sort_values("A", ascending=False)
 table(site_table, index=False)
-top3_all, top3_first = all_share.nlargest(3).sum(), first.nlargest(3).sum()
-say(f"The three busiest sites hold {top3_all:.0%} of visits and {top3_first:.0%} of first stops. First stops stay fixed under every rule; "
+top3 = all_share.nlargest(3).index
+top3_all, top3_first = all_share[top3].sum(), first.reindex(top3).fillna(0).sum()
+say(f"The three most visited sites hold {top3_all:.0%} of visits and {top3_first:.0%} of first stops. First stops stay fixed under every rule; "
     f"section 4 shows what that limits. Inferred stays are longer than listed times where the gaps also hold meals or rest.")
 say()
 order = site_table.iloc[::-1]
@@ -174,8 +178,8 @@ table(by_weekday.round(3))
 fig, ax = plt.subplots(figsize=(6.4, 3.2))
 for day_type, color, label in (("other", BLUE, "Tuesday to Sunday"), ("monday", ORANGE, "Monday (fewer sites available)")):
     part = usual_gday[usual_gday.day_type == day_type]
-    ax.plot(part.hour, part.usual_gday, color=color, linewidth=2, marker="o", markersize=5, label=label)
-ax.set(xlabel="Hour of the day (end of hour)", ylabel="Usual G_hat of visits so far", ylim=(0, 1),
+    ax.plot(part.minute / 60, part.usual_gday, color=color, linewidth=2, label=label)
+ax.set(xlabel="Time of day (hour)", ylabel="Usual G_hat of visits so far", ylim=(0, 1),
        title="Visits so far look concentrated early in any day, hence GDAY is relative to its hour")
 ax.legend(frameon=False)
 save("usual_gday.png")
@@ -210,14 +214,17 @@ bound = np.array(bound)
 arena = train[train.site == 49]
 say(f"- First stops and one-stop visits are fixed under every rule: {np.median(bound[:, 2]):.0%} of visits on a median day and {arena.fixed.mean():.0%} of Arena's "
     f"({arena[arena.t // 60 == 10].fixed.mean():.0%} of its entries at 10:00, {arena[arena.t // 60 == 11].fixed.mean():.0%} at 11:00)")
-say(f"- With them fixed and the same total visits, G_hat could in principle fall to a median of {np.median(bound[:, 1]):.3f}, against {np.median(bound[:, 0]):.3f} observed. "
-    f"First stops limit Arena's morning peak, not the day's overall evenness.")
+length = (arena.end - arena.t).clip(lower=0)
+share_of_hour = lambda h: (lambda o: o[arena.fixed].sum() / o.sum())((arena.end.clip(upper=60 * (h + 1)) - arena.t.clip(lower=60 * h)).clip(lower=0))
+say(f"- Arena's occupancy from those fixed visits: {share_of_hour(10):.0%} at 10:00, {share_of_hour(11):.0%} at 11:00, {length[arena.fixed].sum() / length.sum():.0%} over the day. "
+    f"Arena's morning entries come mostly from first stops, which a rule cannot change; their stays are still sampled in the simulation.")
+say(f"- An aggregate relaxation that keeps these counts and the same total visits, and ignores routes, time and budgets, has a median lower bound on G_hat of {np.median(bound[:, 1]):.3f}, "
+    f"against {np.median(bound[:, 0]):.3f} observed. Fixed counts alone do not explain the observed concentration; this does not show that the bound is attainable.")
 say()
 
 # ---- 5. crowding
 say("## 5. Crowding by site and hour (training days)")
 say()
-train["end"] = train.t + np.fmin(train.site.map(sites.d), train.stay).clip(lower=0)
 rows = []
 for hour in range(8, 22):
     overlap = (train.end.clip(upper=60 * (hour + 1)) - train.t.clip(lower=60 * hour)).clip(lower=0)
@@ -237,8 +244,7 @@ ax.grid(False)
 ax.set_title("Each site fills at its own hours, so crowding is a matter of when as well as where")
 fig.colorbar(image, ax=ax, label="Mean crowding C (1 = usual peak)", fraction=0.04)
 save("crowding_by_hour.png")
-hours = occupancy.groupby("hour").C.mean()
-say(f"Crowding C is reconstructed from entries (card holders only), not observed occupancy. Mean C is highest at {hours.idxmax()}:00 over all sites and hours with people inside.")
+say(f"Crowding C is reconstructed from entries (card holders only), not observed occupancy. Averaged over all sites and training days, with empty hours counted as zero, it is highest at {mean_c.mean().idxmax()}:00.")
 say()
 
 # ---- 6. routes and budget

@@ -57,7 +57,7 @@ def test_split_follows_the_weeks():
     assert days[pd.Timestamp("2019-01-28")] == "validation"  # week 5
 
 
-def test_changing_test_days_does_not_change_training_statistics():
+def test_changing_test_days_does_not_change_any_training_statistic():
     rows = [("a", "2019-01-14", 600, "Arena"), ("a", "2019-01-14", 700, "Duomo"), ("t", "2019-01-07", 600, "Arena"), ("t", "2019-01-07", 900, "Duomo")]
     changed = rows[:2] + [("t", "2019-01-07", 500, "Duomo"), ("t", "2019-01-07", 1000, "San Zeno")]
 
@@ -65,9 +65,30 @@ def test_changing_test_days_does_not_change_training_statistics():
         d = visits(data)
         days = p.split_days(d.date.unique())
         fit = d.merge(days[["date", "split"]], on="date")
-        return p.site_statistics(fit[fit.split == "train"])
+        fit = fit[fit.split == "train"]
+        ids = [49, 52, 63]
+        site_table = p.site_statistics(fit)
+        shares = p.weekday_shares(fit, ids)
+        opened = p.weekday_opening(shares, [pd.Timestamp(x) for x in fit.date.unique()])
+        return site_table, p.site_hours(fit, site_table), shares, p.usual_gday(fit, opened), p.usual_arrivals(fit)
 
-    pd.testing.assert_frame_equal(statistics(rows), statistics(changed))
+    for one, two in zip(statistics(rows), statistics(changed)):
+        pd.testing.assert_frame_equal(one, two)
+
+
+def test_occupancy_intervals_sum_to_the_person_minutes_in_the_hours():
+    d = visits([("a", "2019-01-14", 600, "Arena"), ("a", "2019-01-14", 620, "Duomo")])
+    d_i = pd.Series({49: 60.0, 52: 30.0})
+    i = p.observed_occupancy_intervals(d, d_i)
+    assert i.exit.tolist() == [610, 650]  # next entry less the walk; a last stop stays d
+    hours = sum(float((i.exit.clip(upper=60 * (h + 1)) - i.entry.clip(lower=60 * h)).clip(lower=0).sum()) for h in range(8, 22))
+    assert hours == (i.exit - i.entry).sum()
+
+
+def test_same_day_sensitivity_keeps_low_coverage_sites_out():
+    d = visits([("a", "2019-01-14", 600, "Arena"), ("b", "2019-01-14", 600, "Museo Miniscalchi")])
+    table = p.day_table(d, {pd.Timestamp("2019-01-14"): [49]})
+    assert np.isnan(table.G_hat_same_day.iloc[0])  # one site left, so no Gini; Miniscalchi not counted
 
 
 def test_gini_hat_and_availability():
@@ -76,7 +97,10 @@ def test_gini_hat_and_availability():
     assert p.weekday_opening(shares, [pd.Timestamp("2019-01-14")])[pd.Timestamp("2019-01-14")] == [49]
 
 
-def test_usual_arrivals_count_empty_days_and_keep_mondays_apart():
+def test_usual_denominators_use_the_same_minute_as_their_numerators():
     d = visits([("a", "2019-01-14", 600, "Arena"), ("b", "2019-01-14", 610, "Duomo"), ("c", "2019-01-15", 620, "Arena")])
-    u = p.usual_arrivals(d).set_index(["day_type", "hour"]).usual_arrivals
-    assert u["monday", 10] == 2 and u["other", 10] == 1 and u["other", 11] == 0
+    u = p.usual_arrivals(d).set_index(["day_type", "minute"]).usual_arrivals
+    assert u["monday", 605] == 1 and u["monday", 610] == 2 and u["monday", 659] == 2 and u["monday", 660] == 1  # 60 minutes up to the minute
+    assert u["other", 619] == 0 and u["other", 620] == 1
+    g = p.usual_gday(d, {pd.Timestamp("2019-01-14"): [49, 52], pd.Timestamp("2019-01-15"): [49, 52]}).set_index(["day_type", "minute"]).usual_gday
+    assert g["monday", 600] == 1 and g["monday", 610] == 0  # one site visited, then both once
