@@ -1,74 +1,84 @@
 # Reproduction of Mei and Zhang (2018), BasicGP
 
-Step 1 of the project: re-implement the single-tourist GPHH and check that its results on the TOPTW instances are comparable to those published. One-day trips, Table III of the paper.
+Step 1 of the project: re-implement the single-tourist GPHH and check its results on the TOPTW instances against Table III of the paper (one-day trips).
+
+## Conclusion
+
+The independent DEAP implementation achieved broadly comparable BasicGP performance on the reconstructed one-day benchmarks, with a mean relative difference of -0.60% across 40 instances. Exact numerical reproduction is not claimed, because some implementation details and the construction of the larger instances remain unresolved.
 
 ## Result
 
-- Instances run: 40 of 40, 30 runs each; 40 are within 2.5% of the published BasicGP mean.
-- Mean difference -0.60%, range -2.5% to 1.1%; ours is lower on 31 instances.
-- The difference exceeds 2 standard errors on 10 instances (rough test from published mean and sd, 30 runs each), so a small part of it is systematic.
-- Hand-written SOT rule: within 2% of the paper on 31 instances. SOT is a deterministic-looking greedy rule and is sensitive to small changes.
+- Main evidence, c, r and rc instances: 30 instances, mean difference -0.42%, range -3.33% to 1.41%; within 1%: 17, within 2.5%: 29; below the paper on 21; standardized difference above 2 in size on 7
+- Supplementary, pr instances (construction unconfirmed): 10 instances, mean difference -1.13%, range -3.02% to -0.16%; within 1%: 5, within 2.5%: 9; below the paper on 10; standardized difference above 2 in size on 3
+- All statistics are computed before rounding. Each instance has 30 runs with different seeds; 1,200 runs in all. Test score: the same 500 sampled instances for every run.
+- The standardized difference divides the difference in means by the standard error from the reported means and standard deviations. It is descriptive: it is not the Wilcoxon test of the paper and is not corrected for 40 comparisons.
+- Hand-written SOT, within 2% of the paper on 31 of 40 instances.
 
 ## Comparison
 
-| instance | runs | ours | sd | paper | paper sd | diff % | t | SOT ours | SOT paper | SOT diff % |
+| instance | points | ours | sd | paper | paper sd | diff % | std diff | SOT ours | SOT paper | SOT diff % |
 |---|---|---|---|---|---|---|---|---|---|---|
-| c101 | 30 | 293.9 | 9.63 | 292.44 | 10.25 | 0.5 | 0.57 | 159.54 | 159.74 | -0.1 |
-| c102 | 30 | 333.21 | 10.27 | 338.9 | 5.68 | -1.7 | -2.65 | 183.14 | 183.52 | -0.2 |
-| c103 | 30 | 374.23 | 10.55 | 375.89 | 8.26 | -0.4 | -0.68 | 245.16 | 245.84 | -0.3 |
-| c104 | 30 | 391.96 | 6.51 | 387.61 | 6.43 | 1.1 | 2.6 | 256.38 | 257.4 | -0.4 |
-| c105 | 30 | 326.34 | 7.26 | 323.02 | 8.56 | 1.0 | 1.62 | 170.84 | 171.42 | -0.3 |
-| r101 | 30 | 184.75 | 9.64 | 189.52 | 4.25 | -2.5 | -2.48 | 78.96 | 74.38 | 6.2 |
-| r102 | 30 | 272.71 | 3.83 | 273.66 | 6.82 | -0.3 | -0.67 | 123.37 | 175.03 | -29.5 |
-| r103 | 30 | 282.07 | 5.27 | 281.19 | 6.18 | 0.3 | 0.59 | 93.03 | 93.1 | -0.1 |
-| r104 | 30 | 287.45 | 6.49 | 288.08 | 11.9 | -0.2 | -0.25 | 128.0 | 128.04 | -0.0 |
-| r105 | 30 | 221.37 | 8.38 | 224.94 | 6.02 | -1.6 | -1.9 | 88.0 | 88.0 | 0.0 |
-| rc101 | 30 | 200.74 | 10.82 | 203.83 | 9.05 | -1.5 | -1.2 | 88.0 | 98.0 | -10.2 |
-| rc102 | 30 | 232.34 | 8.74 | 233.54 | 7.2 | -0.5 | -0.58 | 95.38 | 102.29 | -6.8 |
-| rc103 | 30 | 239.38 | 10.98 | 244.39 | 5.31 | -2.1 | -2.25 | 100.34 | 100.56 | -0.2 |
-| rc104 | 30 | 249.87 | 12.09 | 253.77 | 8.32 | -1.5 | -1.46 | 130.27 | 129.68 | 0.5 |
-| rc105 | 30 | 217.07 | 14.41 | 217.59 | 16.48 | -0.2 | -0.13 | 99.35 | 104.37 | -4.8 |
-| c201 | 30 | 821.88 | 12.0 | 822.96 | 10.2 | -0.1 | -0.37 | 181.66 | 182.16 | -0.3 |
-| c202 | 30 | 861.71 | 11.37 | 867.84 | 12.59 | -0.7 | -1.98 | 183.62 | 183.5 | 0.1 |
-| c203 | 30 | 908.27 | 14.02 | 916.61 | 11.48 | -0.9 | -2.52 | 232.72 | 233.66 | -0.4 |
-| c204 | 30 | 925.18 | 10.47 | 933.2 | 9.23 | -0.9 | -3.15 | 197.66 | 197.6 | 0.0 |
-| c205 | 30 | 861.28 | 7.78 | 861.22 | 9.63 | 0.0 | 0.03 | 188.08 | 188.4 | -0.2 |
-| r201 | 30 | 724.92 | 12.56 | 720.94 | 18.5 | 0.6 | 0.98 | 152.35 | 144.69 | 5.3 |
-| r202 | 30 | 837.62 | 16.65 | 840.37 | 15.17 | -0.3 | -0.67 | 257.17 | 257.08 | 0.0 |
-| r203 | 30 | 926.65 | 24.39 | 923.57 | 9.65 | 0.3 | 0.64 | 257.17 | 257.08 | 0.0 |
-| r204 | 30 | 1005.41 | 20.79 | 1004.91 | 16.66 | 0.1 | 0.1 | 307.26 | 307.24 | 0.0 |
-| r205 | 30 | 830.06 | 14.31 | 831.81 | 12.11 | -0.2 | -0.51 | 245.73 | 240.4 | 2.2 |
-| rc201 | 30 | 733.15 | 18.66 | 729.19 | 20.24 | 0.5 | 0.79 | 104.07 | 117.49 | -11.4 |
-| rc202 | 30 | 858.23 | 22.52 | 859.0 | 29.34 | -0.1 | -0.11 | 188.39 | 186.4 | 1.1 |
-| rc203 | 30 | 920.65 | 9.44 | 926.51 | 10.38 | -0.6 | -2.29 | 189.89 | 188.66 | 0.7 |
-| rc204 | 30 | 1034.15 | 23.21 | 1040.73 | 13.96 | -0.6 | -1.33 | 399.89 | 400.14 | -0.1 |
-| rc205 | 30 | 789.05 | 16.86 | 795.34 | 17.91 | -0.8 | -1.4 | 147.54 | 147.5 | 0.0 |
-| pr01 | 30 | 287.27 | 6.5 | 287.99 | 3.5 | -0.2 | -0.53 | 88.49 | 88.51 | -0.0 |
-| pr02 | 30 | 378.77 | 5.92 | 383.04 | 3.09 | -1.1 | -3.5 | 100.39 | 99.83 | 0.6 |
-| pr03 | 30 | 306.55 | 5.35 | 310.41 | 5.4 | -1.2 | -2.78 | 179.8 | 180.06 | -0.1 |
-| pr04 | 30 | 340.61 | 10.96 | 341.93 | 8.13 | -0.4 | -0.53 | 124.2 | 125.63 | -1.1 |
-| pr05 | 30 | 387.64 | 19.73 | 391.88 | 15.63 | -1.1 | -0.92 | 142.61 | 144.66 | -1.4 |
-| pr11 | 30 | 304.03 | 16.15 | 311.5 | 12.2 | -2.4 | -2.02 | 162.67 | 168.94 | -3.7 |
-| pr12 | 30 | 401.36 | 7.13 | 402.91 | 6.09 | -0.4 | -0.9 | 187.75 | 187.6 | 0.1 |
-| pr13 | 30 | 367.73 | 13.43 | 373.9 | 11.58 | -1.6 | -1.91 | 182.9 | 183.18 | -0.2 |
-| pr14 | 30 | 396.55 | 23.51 | 405.52 | 18.82 | -2.2 | -1.63 | 225.67 | 226.82 | -0.5 |
-| pr15 | 30 | 457.98 | 11.65 | 458.58 | 10.36 | -0.1 | -0.21 | 354.0 | 355.43 | -0.4 |
+| c101 | 100 | 294.61 | 10.17 | 292.44 | 10.25 | 0.74 | 0.82 | 159.54 | 159.74 | -0.13 |
+| c102 | 100 | 327.63 | 13.21 | 338.90 | 5.68 | -3.33 | -4.29 | 183.14 | 183.52 | -0.21 |
+| c103 | 100 | 373.48 | 10.97 | 375.89 | 8.26 | -0.64 | -0.96 | 245.16 | 245.84 | -0.28 |
+| c104 | 100 | 393.07 | 4.75 | 387.61 | 6.43 | 1.41 | 3.74 | 256.38 | 257.40 | -0.40 |
+| c105 | 100 | 327.22 | 4.82 | 323.02 | 8.56 | 1.30 | 2.34 | 170.84 | 171.42 | -0.34 |
+| r101 | 100 | 187.37 | 5.94 | 189.52 | 4.25 | -1.13 | -1.61 | 78.96 | 74.38 | 6.16 |
+| r102 | 100 | 269.11 | 6.37 | 273.66 | 6.82 | -1.66 | -2.67 | 123.37 | 175.03 | -29.51 |
+| r103 | 100 | 282.35 | 4.48 | 281.19 | 6.18 | 0.41 | 0.83 | 93.03 | 93.10 | -0.07 |
+| r104 | 100 | 286.99 | 11.53 | 288.08 | 11.90 | -0.38 | -0.36 | 128.00 | 128.04 | -0.03 |
+| r105 | 100 | 222.25 | 8.48 | 224.94 | 6.02 | -1.19 | -1.41 | 88.00 | 88.00 | 0.00 |
+| rc101 | 100 | 200.35 | 11.56 | 203.83 | 9.05 | -1.71 | -1.30 | 88.00 | 98.00 | -10.20 |
+| rc102 | 100 | 232.97 | 12.33 | 233.54 | 7.20 | -0.25 | -0.22 | 95.38 | 102.29 | -6.76 |
+| rc103 | 100 | 241.34 | 9.39 | 244.39 | 5.31 | -1.25 | -1.55 | 100.34 | 100.56 | -0.22 |
+| rc104 | 100 | 250.72 | 8.40 | 253.77 | 8.32 | -1.20 | -1.41 | 130.27 | 129.68 | 0.45 |
+| rc105 | 100 | 219.49 | 12.63 | 217.59 | 16.48 | 0.87 | 0.50 | 99.35 | 104.37 | -4.81 |
+| c201 | 100 | 814.13 | 24.52 | 822.96 | 10.20 | -1.07 | -1.82 | 181.66 | 182.16 | -0.27 |
+| c202 | 100 | 865.46 | 9.77 | 867.84 | 12.59 | -0.27 | -0.82 | 183.62 | 183.50 | 0.07 |
+| c203 | 100 | 911.34 | 11.64 | 916.61 | 11.48 | -0.57 | -1.76 | 232.72 | 233.66 | -0.40 |
+| c204 | 100 | 926.32 | 14.58 | 933.20 | 9.23 | -0.74 | -2.18 | 197.66 | 197.60 | 0.03 |
+| c205 | 100 | 856.72 | 9.86 | 861.22 | 9.63 | -0.52 | -1.79 | 188.08 | 188.40 | -0.17 |
+| r201 | 100 | 729.70 | 15.99 | 720.94 | 18.50 | 1.22 | 1.96 | 152.35 | 144.69 | 5.29 |
+| r202 | 100 | 844.69 | 10.92 | 840.37 | 15.17 | 0.51 | 1.26 | 257.17 | 257.08 | 0.03 |
+| r203 | 100 | 922.92 | 14.57 | 923.57 | 9.65 | -0.07 | -0.20 | 257.17 | 257.08 | 0.03 |
+| r204 | 100 | 1008.20 | 21.87 | 1004.91 | 16.66 | 0.33 | 0.65 | 307.26 | 307.24 | 0.01 |
+| r205 | 100 | 824.10 | 18.23 | 831.81 | 12.11 | -0.93 | -1.93 | 245.73 | 240.40 | 2.22 |
+| rc201 | 100 | 728.47 | 19.25 | 729.19 | 20.24 | -0.10 | -0.14 | 104.07 | 117.49 | -11.42 |
+| rc202 | 100 | 865.32 | 17.54 | 859.00 | 29.34 | 0.74 | 1.01 | 188.39 | 186.40 | 1.07 |
+| rc203 | 100 | 914.62 | 20.47 | 926.51 | 10.38 | -1.28 | -2.84 | 189.89 | 188.66 | 0.65 |
+| rc204 | 100 | 1036.66 | 20.74 | 1040.73 | 13.96 | -0.39 | -0.89 | 399.89 | 400.14 | -0.06 |
+| rc205 | 100 | 783.44 | 22.95 | 795.34 | 17.91 | -1.50 | -2.24 | 147.54 | 147.50 | 0.03 |
+| pr01 | 48 | 284.45 | 11.88 | 287.99 | 3.50 | -1.23 | -1.56 | 88.49 | 88.51 | -0.02 |
+| pr02 | 96 | 377.06 | 10.05 | 383.04 | 3.09 | -1.56 | -3.11 | 100.39 | 99.83 | 0.56 |
+| pr03 | 100 | 305.83 | 5.87 | 310.41 | 5.40 | -1.48 | -3.15 | 179.80 | 180.06 | -0.14 |
+| pr04 | 100 | 340.99 | 6.88 | 341.93 | 8.13 | -0.27 | -0.48 | 124.20 | 125.63 | -1.14 |
+| pr05 | 100 | 390.11 | 14.62 | 391.88 | 15.63 | -0.45 | -0.45 | 142.61 | 144.66 | -1.42 |
+| pr11 | 48 | 306.71 | 18.55 | 311.50 | 12.20 | -1.54 | -1.18 | 162.67 | 168.94 | -3.71 |
+| pr12 | 96 | 400.19 | 9.13 | 402.91 | 6.09 | -0.68 | -1.36 | 187.75 | 187.60 | 0.08 |
+| pr13 | 100 | 362.61 | 13.69 | 373.90 | 11.58 | -3.02 | -3.45 | 182.90 | 183.18 | -0.15 |
+| pr14 | 100 | 401.98 | 12.51 | 405.52 | 18.82 | -0.87 | -0.86 | 225.67 | 226.82 | -0.51 |
+| pr15 | 100 | 457.84 | 16.07 | 458.58 | 10.36 | -0.16 | -0.21 | 354.00 | 355.43 | -0.40 |
 
 ## Settings
 
-From Table II: population 1024, 51 generations, 10 elites, tournament size 7, maximal depth 8, crossover 80%, mutation 15%, reproduction 5%, a new sample of visit lengths each generation, 500 test samples. Functions and terminals as in the paper (BasicGP, without MNS and ANS).
+From Table II of the paper: population 1024, 51 generations, 10 elites, tournament size 7, maximal depth 8, crossover 80%, mutation 15%, reproduction 5%, a new sample of visit lengths each generation, 500 test samples. Functions and terminals as in the paper (BasicGP, without MNS and ANS).
 
-Not stated in the paper, set to the defaults of ECJ, which the paper used: initial trees of depth 2 to 6, 90% internal crossover points, subtree mutation with grown trees of depth 5. These may explain the small systematic difference.
+Not stated in the paper, and set here as a declared DEAP variant modelled on ECJ's Koza defaults, the paper having used ECJ: initial trees ramped half-and-half with depth 2 to 6; 90% internal crossover points; subtree mutation with trees grown to at most depth 5, where any node may stop early. ECJ's own code and the paper's parameter file were not available, so these operators are not claimed to be identical. A child over the depth limit is replaced by its parent.
 
-## What does not match, and what was tried
+Operators in practice: mutation left the tree unchanged in 11.7% of cases and crossover in 18.9% (depth limit, or parents that are identical or too small). Priorities that were not finite: 0 over all runs.
 
-- **Larger pr instances.** The published values match the first 100 or so points of each file, not the full file (up to 240 points), for both the hand-written rule and GP. This is inferred from the numbers: the paper says instances have up to almost 300 points. Runs here use the first 100 points; files with fewer are complete.
-- **SOS.** The published SOS values could not be reproduced with SCORE/SL as defined in Table I, nor with ten other forms of the denominator. SOS is therefore implemented from its formula, and its published values are not claimed to be matched.
-- **SOT on some instances**, such as r102, rc101, rc201. Their results shift with small changes such as distance rounding.
+Implementation conventions not specified by the paper: negative sampled durations are set to 0; ties in priority go to the earliest point; non-finite priorities are set to 0 and counted; distances are rounded down to one decimal (Solomon) or two (Cordeau). Algorithm 2 is implemented following the definitions in the text, with one current time, rather than line by line.
+
+## What does not match, and what remains unresolved
+
+- **Instance construction.** Every run uses at most the first 100 candidate points after the depot, which truncates only pr03, pr04, pr05, pr13, pr14, pr15. A first-100-candidate reconstruction produced closer numerical agreement than the full files, for both SOT and GP. This is inferred from the numbers; the paper states that instances have almost 300 points, and the authors' instances or parser were not available.
+- **SOS.** SOS was implemented as SCORE/(TC-TA), following the published definition. Its reported numerical results could not be reproduced under the documented reconstruction. The discrepancy remains unresolved; agreement with the published SOS results is not claimed.
+- **SOT** differs by more than 2% on 9 instances, up to 29.5%. SOT involves no GP training, so these differences point to details of the instances, ties or sampling that are not documented.
 - **Three-day trips (Table IV)** are out of scope: the project treats each card-day as one visitor.
 
 ## Checks
 
-- `tests/test_toptw.py`: hand-built cases (feasibility, waiting, second day, sampled durations, protected division).
-- `tests/test_toptw.py` also recomputes 1,080 routes outside the simulator: no violation of visits once, time windows or budget, and scores agree.
+- `tests/test_toptw.py`: hand-built cases; grown and initial tree shapes and the depth limit; and a recomputation of 1,080 routes outside the simulator, in which every selection satisfied the paper's expected-duration feasibility conditions, each point was visited once and scores agreed. Realised sampled durations may exceed the nominal return budget, as in the paper.
 - Same seed run twice gives the same rule and test score.
+- The code was rewritten for readability after these runs (code hash 3b25478088 to b03f69bee8). Re-running c103 seed 0, r101 seed 3, pr13 seed 7 and c201 seed 1 with the rewritten code gave the same rules, training and test scores, tree sizes and operator counts.
+- Each row of `all40.csv` records the points used, the truncation setting, hashes of the input file and code, and the test seed and sample count.

@@ -1,7 +1,16 @@
-"""Compare the single-tourist GPHH with Table III of Mei and Zhang (2018) and write outputs/toptw/reproduction.md.
-
-Run from the repository root:  python3 src/reproduction_report.py
 """
+Reproduction record for Step 1
+==============================
+
+Compares the single-tourist GPHH (src/single_gphh.py) with Table III of
+Mei and Zhang (2018), one-day trips, and writes the record of what matches,
+what does not, and how it was checked.
+
+Run:  python3 src/reproduction_report.py   (from the repository root)
+Reads outputs/toptw/all40.csv and the TOPTW instances in data/toptw/.
+Writes outputs/toptw/reproduction.md.
+"""
+
 from pathlib import Path
 
 import numpy as np
@@ -9,8 +18,13 @@ import pandas as pd
 
 from toptw import load_instance, sot, test_score
 
-MAX_POINTS = 100
-# instance, SOS, SOT, BasicGP mean, BasicGP sd (Table III, one-day trips)
+FOLDER = Path("outputs/toptw")
+MAX_POINTS = 100  # every run uses at most the first 100 candidate points after the depot
+
+# ---------------------------------------------------------------------- #
+# 1. Published values: instance, SOS, SOT, BasicGP mean and sd (Table III)
+# ---------------------------------------------------------------------- #
+
 TABLE_III = """c101 187.16 159.74 292.44 10.25
 c102 205.96 183.52 338.90 5.68
 c103 264.46 245.84 375.89 8.26
@@ -51,68 +65,162 @@ pr12 138.68 187.60 402.91 6.09
 pr13 90.46 183.18 373.90 11.58
 pr14 119.04 226.82 405.52 18.82
 pr15 103.10 355.43 458.58 10.36"""
-paper = pd.DataFrame([line.split() for line in TABLE_III.splitlines()], columns=["instance", "sos", "sot", "gp", "gp_sd"]).set_index("instance").astype(float)
-folder = Path("outputs/toptw")
-early = pd.read_csv(folder / "fig2_instances.csv")
-early = early[~early.instance.isin(["pr03", "pr14"])]  # those two were first run on the full files
-files = [early] + [pd.read_csv(folder / name) for name in ("pr_matching.csv", "pr_first100.csv", "remaining_instances.csv") if (folder / name).exists() and (folder / name).stat().st_size > 0]
-results = pd.concat(files)
 
-rows = []
-for name, target in paper.iterrows():
-    runs = results[results.instance == name]
-    if runs.empty:
-        continue
-    instance = load_instance(f"data/toptw/{name}.txt", MAX_POINTS)
-    mean, sd, n = runs.test.mean(), runs.test.std(), len(runs)
-    standard_error = np.sqrt(sd ** 2 / n + target.gp_sd ** 2 / 30)
-    hand = test_score(instance, sot)
-    rows.append({"instance": name, "runs": n, "ours": round(mean, 2), "sd": round(sd, 2), "paper": target.gp, "paper sd": target.gp_sd,
-                 "diff %": round((mean - target.gp) / target.gp * 100, 1), "t": round((mean - target.gp) / standard_error, 2),
-                 "SOT ours": round(hand, 2), "SOT paper": target.sot, "SOT diff %": round((hand - target.sot) / target.sot * 100, 1)})
-table = pd.DataFrame(rows)
-within = (table["diff %"].abs() <= 2.5).sum()
-beyond = (table.t.abs() > 2).sum()
-below = (table["diff %"] < 0).sum()
-sot_within = (table["SOT diff %"].abs() <= 2).sum()
-out = [
-    "# Reproduction of Mei and Zhang (2018), BasicGP",
-    "",
-    "Step 1 of the project: re-implement the single-tourist GPHH and check that its results on the TOPTW instances are comparable to those published. One-day trips, Table III of the paper.",
-    "",
-    "## Result",
-    "",
-    f"- Instances run: {len(table)} of 40, 30 runs each; {within} are within 2.5% of the published BasicGP mean.",
-    f"- Mean difference {table['diff %'].mean():.2f}%, range {table['diff %'].min():.1f}% to {table['diff %'].max():.1f}%; ours is lower on {below} instances.",
-    f"- The difference exceeds 2 standard errors on {beyond} instances (rough test from published mean and sd, 30 runs each), so a small part of it is systematic.",
-    f"- Hand-written SOT rule: within 2% of the paper on {sot_within} instances. SOT is a deterministic-looking greedy rule and is sensitive to small changes.",
-    "",
-    "## Comparison",
-    "",
-    "| " + " | ".join(table.columns) + " |",
-    "|" + "---|" * len(table.columns),
-]
-out += ["| " + " | ".join(str(x) for x in row) + " |" for row in table.itertuples(index=False)]
-out += [
-    "",
-    "## Settings",
-    "",
-    "From Table II: population 1024, 51 generations, 10 elites, tournament size 7, maximal depth 8, crossover 80%, mutation 15%, reproduction 5%, a new sample of visit lengths each generation, 500 test samples. Functions and terminals as in the paper (BasicGP, without MNS and ANS).",
-    "",
-    "Not stated in the paper, set to the defaults of ECJ, which the paper used: initial trees of depth 2 to 6, 90% internal crossover points, subtree mutation with grown trees of depth 5. These may explain the small systematic difference.",
-    "",
-    "## What does not match, and what was tried",
-    "",
-    "- **Larger pr instances.** The published values match the first 100 or so points of each file, not the full file (up to 240 points), for both the hand-written rule and GP. This is inferred from the numbers: the paper says instances have up to almost 300 points. Runs here use the first 100 points; files with fewer are complete.",
-    "- **SOS.** The published SOS values could not be reproduced with SCORE/SL as defined in Table I, nor with ten other forms of the denominator. SOS is therefore implemented from its formula, and its published values are not claimed to be matched.",
-    "- **SOT on some instances**, such as r102, rc101, rc201. Their results shift with small changes such as distance rounding.",
-    "- **Three-day trips (Table IV)** are out of scope: the project treats each card-day as one visitor.",
-    "",
-    "## Checks",
-    "",
-    "- `tests/test_toptw.py`: hand-built cases (feasibility, waiting, second day, sampled durations, protected division).",
-    "- `tests/test_toptw.py` also recomputes 1,080 routes outside the simulator: no violation of visits once, time windows or budget, and scores agree.",
-    "- Same seed run twice gives the same rule and test score.",
-]
-(folder / "reproduction.md").write_text("\n".join(out) + "\n")
-print(f"{len(table)} instances, within 2.5%: {within}; mean diff {table['diff %'].mean():.2f}; |t|>2: {beyond}; below: {below}; SOT within 2%: {sot_within}")
+
+def published_table():
+    rows = [line.split() for line in TABLE_III.splitlines()]
+    paper = pd.DataFrame(rows, columns=["instance", "sos", "sot", "gp", "gp_sd"])
+    return paper.set_index("instance").astype(float)
+
+
+# ---------------------------------------------------------------------- #
+# 2. Comparison
+# ---------------------------------------------------------------------- #
+
+def compare(paper, results):
+    """One row per instance: our GP mean and sd against the paper's, and the hand-written SOT.
+    The standardized difference uses the standard error from both means and sds (30 runs each)."""
+    rows = []
+    for name, target in paper.iterrows():
+        runs = results[results.instance == name]
+        if runs.empty:
+            continue
+        instance = load_instance(f"data/toptw/{name}.txt", MAX_POINTS)
+        assert runs.points.eq(len(instance.score) - 1).all()
+        mean, sd, n = runs.test.mean(), runs.test.std(), len(runs)
+        standard_error = np.sqrt(sd ** 2 / n + target.gp_sd ** 2 / 30)
+        hand = test_score(instance, sot)
+        rows.append({"instance": name, "points": int(runs.points.iloc[0]), "ours": mean, "sd": sd,
+                     "paper": target.gp, "paper sd": target.gp_sd,
+                     "diff %": (mean - target.gp) / target.gp * 100,
+                     "std diff": (mean - target.gp) / standard_error,
+                     "SOT ours": hand, "SOT paper": target.sot,
+                     "SOT diff %": (hand - target.sot) / target.sot * 100})
+    return pd.DataFrame(rows)
+
+
+def summary(part, label):
+    """One line on a group of instances. Statistics are computed before rounding."""
+    d = part["diff %"]
+    return (f"- {label}: {len(part)} instances, mean difference {d.mean():.2f}%, "
+            f"range {d.min():.2f}% to {d.max():.2f}%; "
+            f"within 1%: {(d.abs() <= 1).sum()}, within 2.5%: {(d.abs() <= 2.5).sum()}; "
+            f"below the paper on {(d < 0).sum()}; "
+            f"standardized difference above 2 in size on {(part['std diff'].abs() > 2).sum()}")
+
+
+def markdown_table(table):
+    """The comparison table, numbers shown with two decimals."""
+    shown = table.copy()
+    for column in shown.columns[2:]:
+        shown[column] = shown[column].map(lambda x: f"{x:.2f}")
+    lines = ["| " + " | ".join(shown.columns) + " |", "|" + "---|" * len(shown.columns)]
+    for row in shown.itertuples(index=False):
+        lines.append("| " + " | ".join(str(x) for x in row) + " |")
+    return lines
+
+
+# ---------------------------------------------------------------------- #
+# 3. The record
+# ---------------------------------------------------------------------- #
+
+def record(table, results, main, supplement, truncated):
+    out = ["# Reproduction of Mei and Zhang (2018), BasicGP", ""]
+    out += ["Step 1 of the project: re-implement the single-tourist GPHH and check its results "
+            "on the TOPTW instances against Table III of the paper (one-day trips).", ""]
+
+    out += ["## Conclusion", ""]
+    out += [f"The independent DEAP implementation achieved broadly comparable BasicGP performance "
+            f"on the reconstructed one-day benchmarks, with a mean relative difference of "
+            f"{table['diff %'].mean():.2f}% across {len(table)} instances. "
+            "Exact numerical reproduction is not claimed, because some implementation details "
+            "and the construction of the larger instances remain unresolved.", ""]
+
+    out += ["## Result", ""]
+    out += [summary(main, "Main evidence, c, r and rc instances"),
+            summary(supplement, "Supplementary, pr instances (construction unconfirmed)"),
+            f"- All statistics are computed before rounding. Each instance has 30 runs with different seeds; "
+            f"{len(results):,} runs in all. Test score: the same 500 sampled instances for every run.",
+            "- The standardized difference divides the difference in means by the standard error from the "
+            "reported means and standard deviations. It is descriptive: it is not the Wilcoxon test of the "
+            "paper and is not corrected for 40 comparisons.",
+            f"- Hand-written SOT, within 2% of the paper on {(table['SOT diff %'].abs() <= 2).sum()} "
+            f"of {len(table)} instances.", ""]
+
+    out += ["## Comparison", ""]
+    out += markdown_table(table)
+
+    out += ["", "## Settings", ""]
+    out += ["From Table II of the paper: population 1024, 51 generations, 10 elites, tournament size 7, "
+            "maximal depth 8, crossover 80%, mutation 15%, reproduction 5%, a new sample of visit lengths "
+            "each generation, 500 test samples. Functions and terminals as in the paper (BasicGP, without "
+            "MNS and ANS).", ""]
+    out += ["Not stated in the paper, and set here as a declared DEAP variant modelled on ECJ's Koza defaults, "
+            "the paper having used ECJ: initial trees ramped half-and-half with depth 2 to 6; 90% internal "
+            "crossover points; subtree mutation with trees grown to at most depth 5, where any node may stop "
+            "early. ECJ's own code and the paper's parameter file were not available, so these operators are "
+            "not claimed to be identical. A child over the depth limit is replaced by its parent.", ""]
+    out += [f"Operators in practice: mutation left the tree unchanged in {results.mutation_unchanged.mean():.1%} "
+            f"of cases and crossover in {results.crossover_unchanged.mean():.1%} (depth limit, or parents that "
+            f"are identical or too small). Priorities that were not finite: {int(results.non_finite.sum()):,} "
+            f"over all runs.", ""]
+    out += ["Implementation conventions not specified by the paper: negative sampled durations are set to 0; "
+            "ties in priority go to the earliest point; non-finite priorities are set to 0 and counted; "
+            "distances are rounded down to one decimal (Solomon) or two (Cordeau). Algorithm 2 is implemented "
+            "following the definitions in the text, with one current time, rather than line by line.", ""]
+
+    out += ["## What does not match, and what remains unresolved", ""]
+    out += [f"- **Instance construction.** Every run uses at most the first {MAX_POINTS} candidate points "
+            f"after the depot, which truncates only {', '.join(truncated)}. A first-{MAX_POINTS}-candidate "
+            f"reconstruction produced closer numerical agreement than the full files, for both SOT and GP. "
+            f"This is inferred from the numbers; the paper states that instances have almost 300 points, and "
+            f"the authors' instances or parser were not available.",
+            "- **SOS.** SOS was implemented as SCORE/(TC-TA), following the published definition. Its reported "
+            "numerical results could not be reproduced under the documented reconstruction. The discrepancy "
+            "remains unresolved; agreement with the published SOS results is not claimed.",
+            f"- **SOT** differs by more than 2% on {(table['SOT diff %'].abs() > 2).sum()} instances, up to "
+            f"{table['SOT diff %'].abs().max():.1f}%. SOT involves no GP training, so these differences point "
+            f"to details of the instances, ties or sampling that are not documented.",
+            "- **Three-day trips (Table IV)** are out of scope: the project treats each card-day as one visitor.",
+            ""]
+
+    out += ["## Checks", ""]
+    out += ["- `tests/test_toptw.py`: hand-built cases; grown and initial tree shapes and the depth limit; and "
+            "a recomputation of 1,080 routes outside the simulator, in which every selection satisfied the "
+            "paper's expected-duration feasibility conditions, each point was visited once and scores agreed. "
+            "Realised sampled durations may exceed the nominal return budget, as in the paper.",
+            "- Same seed run twice gives the same rule and test score.",
+            "- The code was rewritten for readability after these runs (code hash 3b25478088 to b03f69bee8). "
+            "Re-running c103 seed 0, r101 seed 3, pr13 seed 7 and c201 seed 1 with the rewritten code gave "
+            "the same rules, training and test scores, tree sizes and operator counts.",
+            "- Each row of `all40.csv` records the points used, the truncation setting, hashes of the input file "
+            "and code, and the test seed and sample count."]
+    return out
+
+
+# ---------------------------------------------------------------------- #
+# 4. Main
+# ---------------------------------------------------------------------- #
+
+def main():
+    paper = published_table()
+    results = pd.read_csv(FOLDER / "all40.csv")
+    # Every instance has its 30 runs, all from the same code.
+    assert results.groupby("instance").seed.nunique().eq(30).all()
+    assert results.code_sha1.nunique() == 1
+
+    table = compare(paper, results)
+    is_pr = table.instance.str.startswith("pr")
+    main_part, supplement = table[~is_pr], table[is_pr]
+    truncated = [name for name in paper.index if len(load_instance(f"data/toptw/{name}.txt").score) - 1 > MAX_POINTS]
+
+    lines = record(table, results, main_part, supplement, truncated)
+    (FOLDER / "reproduction.md").write_text("\n".join(lines) + "\n")
+    print(f"{len(table)} instances; mean {table['diff %'].mean():.3f}; "
+          f"within 2.5%: {(table['diff %'].abs() <= 2.5).sum()}; below {(table['diff %'] < 0).sum()}")
+    print("main", summary(main_part, "m"))
+    print("pr", summary(supplement, "s"))
+
+
+if __name__ == "__main__":
+    main()
