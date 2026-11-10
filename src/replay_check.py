@@ -53,7 +53,7 @@ def check_pilot_days(days, visitors):
         assert len(day.visitors) == len(table) and day.visitors.evaluated.sum() == (table.stops >= 2).sum()
         assert len(day.fixed) == row.visits == result.entries_per_site.sum()
         assert day.available.sum() == row.open_sites
-        assert np.allclose(day.visitors.sort_values("visitor").budget_used, table.sort_values("visitor").budget)
+        assert np.allclose(day.visitors.sort_values("visitor").budget_limit, table.sort_values("visitor").budget)
         conserved = np.isclose(result.person_minutes.sum(), (day.fixed.exit - day.fixed.entry).sum())
         assert conserved
         say(f"| {date} ({pd.Timestamp(date):%a}) | {len(day.visitors):,} | {day.visitors.evaluated.sum():,} | "
@@ -112,7 +112,10 @@ def check_training_days(days):
     ours = pd.concat(parts).sort_index()
     seconds = time.time() - started
 
-    eda = eda_route_values(visits[visits.split == "train"], sites, walk).sort_index()
+    # The EDA computes crowding for 08:00 to 22:00 only, so every interval must end before 22:00.
+    train_visits = visits[visits.split == "train"]
+    assert observed_occupancy_intervals(train_visits, sites.d).exit.max() < 22 * 60
+    eda = eda_route_values(train_visits, sites, walk).sort_index()
     assert ours.index.equals(eda.index), "the same evaluated visitors"
     gap = (ours - eda).abs().max()
     assert (gap < 1e-9).all(), gap

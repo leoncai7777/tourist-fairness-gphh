@@ -78,10 +78,13 @@ def test_replay_by_hand():
     assert list(result.baseline.index) == [0]  # only evaluated visitors
 
 
-def test_replayed_route_has_relative_value_one():
+def test_baseline_value_by_hand():
+    """Checked against the formula, not against itself: a test of R_v = 1 alone would pass
+    even if both sides read the wrong column."""
     result = replay(small_day())
-    value = baseline_value(result, 0.25, 0.5)
-    assert np.allclose(relative_value(value, value, result.baseline.A), 1)
+    value = baseline_value(result, 0.25, 0.5).loc[0]
+    assert np.isclose(value, 1.5 - 0.25 * (40 / 120 + 10 / 60) - 0.5 * (10 / 60))
+    assert relative_value(value, value, 1.5) == 1
 
 
 # ---------------------------------------------------------------------- #
@@ -121,6 +124,20 @@ def test_pilot_days_match_the_tables():
         assert sum(len(r) for r in day.routes) == visits
         assert (day.visitors.evaluated == (day.visitors.stops >= 2)).all()
         assert replay(day).entries_per_site.sum() == visits
+
+
+@needs_data
+def test_options_for_the_sensitivity_runs():
+    main = load_day("2019-06-03")
+    span = load_day("2019-06-03", budget="span")
+    assert (span.visitors.budget_limit <= main.visitors.budget_limit + 1e-9).all()
+    assert (span.visitors.budget_limit < main.visitors.budget_limit).any()
+    same_day = load_day("2019-06-03", same_day=True)
+    with_entries = {day_site for day_site in same_day.fixed.site}
+    expected = [k in with_entries and site != 300 for k, site in enumerate(same_day.site_ids)]
+    assert same_day.available.tolist() == expected
+    with pytest.raises(ValueError):
+        load_day("2019-06-03", budget="corected")
 
 
 @needs_data

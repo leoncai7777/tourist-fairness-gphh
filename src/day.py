@@ -43,10 +43,12 @@ class Day:
     walk: np.ndarray         # sites x sites, minutes
     usual_gday: np.ndarray   # one value per minute from FIRST_MINUTE to LAST_MINUTE
     usual_arrivals: np.ndarray
-    visitors: pd.DataFrame   # one row per visitor index
+    visitors: pd.DataFrame   # one row per visitor index, with budget_limit and stop_limit
     routes: list             # observed route of each visitor, as site indices
     entries: list            # observed entry times of each visitor
-    fixed: pd.DataFrame      # observed occupancy intervals: visitor, entry_index, site, entry, exit
+    fixed: pd.DataFrame      # observed occupancy intervals of every visitor: visitor, entry_index, site,
+                             # entry, exit. The replay uses all of them; the engine only those of visitors
+                             # who do not follow.
     data_version: str
 
 
@@ -122,9 +124,32 @@ def visitor_frame(visitors, follows):
     return v
 
 
+def observed_routes(visits, number, index_of, n_visitors):
+    """Route (site indices) and entry times of each visitor, by visitor number."""
+    routes, entries = [None] * n_visitors, [None] * n_visitors
+    for visitor, g in visits.groupby("visitor"):
+        k = number[visitor]
+        routes[k] = np.array([index_of[s] for s in g.site])
+        entries[k] = g.t.to_numpy(float)
+    assert all(r is not None for r in routes), "every visitor has a route"
+    return routes, entries
+
+
+def fixed_intervals(visits, sites, number, index_of):
+    """The observed occupancy interval of every entry, keyed by visitor number and entry index."""
+    intervals = observed_occupancy_intervals(visits, sites.d)
+    return pd.DataFrame({"visitor": intervals.visitor.map(number).to_numpy(),
+                         "entry_index": (visits.stop - 1).to_numpy(),
+                         "site": intervals.site.map(index_of).to_numpy(),
+                         "entry": intervals.entry.to_numpy(float),
+                         "exit": intervals.exit.to_numpy(float)})
+
+
 def load_day(date, year=None, follows=None, budget="corrected", same_day=False):
     """One day. budget is "corrected" (main) or "span" (the uncorrected sensitivity run);
     same_day switches availability to the sites with entries that day."""
+    if budget not in ("corrected", "span"):
+        raise ValueError(f"budget must be 'corrected' or 'span', not {budget!r}")
     date = pd.Timestamp(date)
     year = year or date.year
     tables = load_tables(year)
@@ -135,23 +160,13 @@ def load_day(date, year=None, follows=None, budget="corrected", same_day=False):
 
     visits = tables["visits"][tables["visits"].date == date]
     visitors = visitor_frame(tables["visitors"][tables["visitors"].date == date], follows)
-    visitors["budget_used"] = visitors.budget if budget == "corrected" else visitors.span
+    visitors["budget_limit"] = visitors.budget if budget == "corrected" else visitors.span
     visitors["stop_limit"] = visitors.stops
 
-    # Routes, entries and fixed intervals, by visitor index.
     number = dict(zip(visitors.visitor, visitors.index))
     visits = visits.sort_values(["visitor", "stop"])
-    routes, entries = [None] * len(visitors), [None] * len(visitors)
-    for visitor, g in visits.groupby("visitor"):
-        k = number[visitor]
-        routes[k] = np.array([index_of[s] for s in g.site])
-        entries[k] = g.t.to_numpy(float)
-    intervals = observed_occupancy_intervals(visits, sites.d)
-    fixed = pd.DataFrame({"visitor": intervals.visitor.map(number).to_numpy(),
-                          "entry_index": (visits.stop - 1).to_numpy(),
-                          "site": intervals.site.map(index_of).to_numpy(),
-                          "entry": intervals.entry.to_numpy(float),
-                          "exit": intervals.exit.to_numpy(float)})
+    routes, entries = observed_routes(visits, number, index_of, len(visitors))
+    fixed = fixed_intervals(visits, sites, number, index_of)
 
     day_type = "monday" if date.dayofweek == 0 else "other"
     opening, closing = month_hours(tables["hours"], sites, date.month)
