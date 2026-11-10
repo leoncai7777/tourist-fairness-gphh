@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from day import Day
+
 STAYS = 1  # named random stream for stays (section 5 of the design)
 VISIT_END, ARRIVAL, START, DECISION = 0, 1, 2, 3
 MIN_STAY = 1.0  # minutes
@@ -49,14 +51,14 @@ def stay_table(day, replicate):
 
 @dataclass
 class DayRun:
-    """What happened on the day."""
-    routes: dict = field(default_factory=dict)       # follower -> [(site, start, stay)]
-    end_reason: dict = field(default_factory=dict)   # follower -> "limit", "none feasible", "no observed stop left"
-    skips: list = field(default_factory=list)        # (follower, site, reason) for stops a policy passed over
-    overruns: list = field(default_factory=list)     # (follower, site, "closing" or "budget")
-    entries: list = field(default_factory=list)      # (site, time) of every entry, in order
-    intervals: list = field(default_factory=list)    # (site, start, end) of every visit, for scoring
-    visits: np.ndarray = None                        # x: entries per site at the end of the day
+    """What happened on the day. Sites and visitors are the indices of the Day."""
+    routes: dict[int, list[tuple[int, float, float]]] = field(default_factory=dict)  # follower -> (site, start, stay)
+    end_reason: dict[int, str] = field(default_factory=dict)  # "limit", "none feasible", "no observed stop left"
+    skips: list[tuple[int, int, str]] = field(default_factory=list)      # (follower, site, reason) passed over
+    overruns: list[tuple[int, int, str]] = field(default_factory=list)   # (follower, site, "closing" or "budget")
+    entries: list[tuple[int, float]] = field(default_factory=list)       # (site, time) of every entry, in order
+    intervals: list[tuple[int, float, float]] = field(default_factory=list)  # (site, start, end), for scoring
+    visits: np.ndarray | None = None                                     # x: entries per site at the end
     events: int = 0
     trace: list = field(default_factory=list)
 
@@ -66,7 +68,8 @@ class Engine:
         self.day, self.policy, self.stays = day, policy, stays
         self.use_stop_limit, self.tracing, self.checking = stop_limit, trace, check
         n_sites, n_visitors = len(day.site_ids), len(day.visitors)
-        # Running state; the day's arrays are read-only.
+        # Running state of this run. The day's numeric arrays are read-only; its tables and routes
+        # are shared and must not be changed.
         self.now = 0.0
         self.inside = np.zeros(n_sites, int)
         self.on_the_way = np.zeros(n_sites, int)
@@ -76,8 +79,8 @@ class Engine:
         self.visited = np.zeros((n_visitors, n_sites), bool)
         self.state = {}                                # follower -> not started, walking, waiting, visiting, finished
         self.start = np.array([e[0] for e in day.entries], float)
-        self.budget_end = self.start + day.visitors.budget_limit.to_numpy(float)
-        self.stop_limit = day.visitors.stop_limit.to_numpy()
+        self.budget_end = self.start + day.visitors["budget_limit"].to_numpy(float)
+        self.stop_limit = day.visitors["stop_limit"].to_numpy()
         self.heap = []
         self.run = DayRun()
 
@@ -90,12 +93,16 @@ class Engine:
 
     def queue_the_day(self):
         visitors = self.day.visitors
-        for k in visitors.index[visitors.follows]:
+        for k in visitors.index[visitors["follows"]]:
             # The first stop is exogenous: a start of visit at the observed time, no walk before it.
             self.push(self.day.entries[k][0], START, k, 0, self.day.routes[k][0])
             self.state[k] = "not started"
-        fixed = self.day.fixed[~visitors.follows.to_numpy()[self.day.fixed.visitor]]
-        for k, i, j, entry, exit_ in zip(fixed.visitor, fixed.entry_index, fixed.site, fixed.entry, fixed.exit):
+        # Visitors who do not follow keep their observed intervals; followers' intervals come from the run.
+        follows = visitors["follows"].to_numpy()
+        fixed_visitor_indices = self.day.fixed["visitor"].to_numpy()
+        fixed = self.day.fixed.loc[~follows[fixed_visitor_indices]]
+        rows = zip(fixed["visitor"], fixed["entry_index"], fixed["site"], fixed["entry"], fixed["exit"])
+        for k, i, j, entry, exit_ in rows:
             self.push(entry, START, k, i, j)
             if exit_ > entry:  # a zero-length interval adds a visit but no one inside
                 self.push(exit_, VISIT_END, k, i, j)
@@ -191,7 +198,7 @@ class Engine:
 
     def simulate(self):
         fixed = self.day.fixed
-        rows = zip(fixed.visitor, fixed.entry_index, fixed.entry, fixed.exit)
+        rows = zip(fixed["visitor"], fixed["entry_index"], fixed["entry"], fixed["exit"])
         self.fixed_lookup = {(k, i): (entry, exit_) for k, i, entry, exit_ in rows}
         if hasattr(self.policy, "reset"):
             self.policy.reset()
@@ -223,8 +230,10 @@ class Engine:
                 f"inside {self.inside.tolist()}  on the way {self.on_the_way.tolist()}")
 
 
-def simulate(day, policy, replicate=0, stays=None, stop_limit=True, trace=False, check=False):
-    """One day. stays overrides the drawn table (for hand-built tests)."""
+def simulate(day: Day, policy, replicate: int = 0, stays: np.ndarray | None = None, stop_limit: bool = True,
+             trace: bool = False, check: bool = False) -> DayRun:
+    """One day. stays overrides the drawn table (for hand-built tests). policy follows the contract
+    in the module docstring."""
     if stays is None:
         stays = stay_table(day, replicate)
     return Engine(day, policy, stays, stop_limit, trace, check).simulate()
