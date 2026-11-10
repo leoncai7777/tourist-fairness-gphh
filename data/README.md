@@ -7,12 +7,12 @@ VeronaCard is Verona's city pass. Each time a visitor enters an attraction with 
 | File | What it is | Source and licence |
 |---|---|---|
 | `verona/veronacard_2019_opendata.csv` | Full year 2019. One row per entry: card id, card type (24h/48h), activation date, visit date, visit time (to the minute), site name, latitude, longitude | Comune di Verona, "Dati Veronacard 2019", [dati.veneto.it](https://dati.veneto.it/opendata/Dati_Veronacard_2019), CC BY 4.0 |
-| `verona/veronacard_2022_original.csv` | Full year 2022 (1 Jan to 30 Dec). One row per entry: visit date, visit time (to the second), site name, device, card id, activation date, "in", count, card type | [smigliorini/itinerary-drl](https://github.com/smigliorini/itinerary-drl), released with Dalla Vecchia et al. (2024) under the MIT licence (`verona/LICENSE-itinerary-drl.txt`); the data originate from the VeronaCard system of the Comune di Verona |
-| `verona/data_2023.csv` | 1 Jan to 27 Feb 2023 only | same |
-| `verona/poi_it_complete.csv` | Attraction list with typical visit time (minutes) and capacity (`max_crowd`, given for some attractions) | same |
-| `verona/poi_time_travel.csv` | Walking time between attraction pairs (minutes), computed along the street network with OSMnx (Dalla Vecchia et al. 2024, p.470) | same |
-| `verona/log_crowd.csv` | Estimated people per attraction at 00, 08, 12 and 16 h, 8 Nov to 14 Dec 2022 (31 days) | same |
-| `verona/poi_popularity_train.csv` | Popularity table used in that repository | same |
+| `verona/veronacard_2022_original.csv` | Full year 2022 (1 Jan to 30 Dec). One row per entry: visit date, visit time (to the second), site name, device, card id, activation date, "in", count, card type | [smigliorini/itinerary-drl](https://github.com/smigliorini/itinerary-drl), released with Dalla Vecchia et al. (2024). **Not in this repository: download it into `data/verona/`.** The MIT licence of that repository (`verona/LICENSE-itinerary-drl.txt`) covers its code; the data's own licence is not stated; the data originate from the VeronaCard system of the Comune di Verona |
+| `verona/data_2023.csv` | 1 Jan to 27 Feb 2023 only | Same source as the 2022 file. **Not in this repository: download it into `data/verona/`.** The data's own licence is not stated |
+| `verona/poi_it_complete.csv` | Attraction list with typical visit time (minutes) and capacity (`max_crowd`, given for some attractions) | Same repository (itinerary-drl); the data's own licence is not stated |
+| `verona/poi_time_travel.csv` | Walking time between attraction pairs (minutes), computed along the street network with OSMnx (Dalla Vecchia et al. 2024, p.470) | Same repository (itinerary-drl); the data's own licence is not stated |
+| `verona/log_crowd.csv` | Estimated people per attraction at 00, 08, 12 and 16 h, 8 Nov to 14 Dec 2022 (31 days) | Same repository (itinerary-drl); the data's own licence is not stated |
+| `verona/poi_popularity_train.csv` | Popularity table used in that repository | Same repository (itinerary-drl); the data's own licence is not stated |
 
 Quick numbers (computed with pandas from these files):
 

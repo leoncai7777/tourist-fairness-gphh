@@ -28,7 +28,7 @@ A genetic programming hyper-heuristic (GPHH) evolves the rule. Each simulated da
 
 ## Data
 
-VeronaCard, Verona's city pass: every attraction entry with its time, for 2019 (open data, CC BY 4.0) and 2022 (released with Dalla Vecchia et al. 2024, MIT). See [`data/README.md`](data/README.md) for files, sources, licences and summary numbers.
+VeronaCard, Verona's city pass: every attraction entry with its time, for 2019 (open data, CC BY 4.0) and 2022 and early 2023 (released with Dalla Vecchia et al. 2024; the repository's code is MIT, and the data's own licence is not stated). See [`data/README.md`](data/README.md) for files, sources, licences and summary numbers.
 
 ## Status (October 2026)
 

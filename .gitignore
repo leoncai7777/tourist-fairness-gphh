@@ -217,5 +217,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# VeronaCard 2022 and 2023: data licence not stated, keep local only
+data/verona/veronacard_2022_original.csv
+data/verona/data_2023.csv
+
 # Toronto Flickr data: no licence in the source repo, contains Flickr user IDs, keep local only
 data/toronto/
