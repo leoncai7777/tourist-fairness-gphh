@@ -194,9 +194,12 @@ def short_searches():
     say(f"Population {settings['population']}, {settings['generations']} generations, monitoring after the last. "
         f"Too short to compare methods; this checks the machinery.")
     say()
-    say("| Method | Dates of the schedule | Crossover changed | Mutation changed | Reverts | Constant cuts "
-        "| Duplicates (last) | Mean nodes (last) | Front size (last) | Seconds per generation |")
-    say("|---|---|---|---|---|---|---|---|---|---|")
+    say("New texts: children kept after the cut to N whose text is not a parent's. Unique and largest share: of the "
+        "last population, the share of distinct rule texts and the share held by the most common one.")
+    say()
+    say("| Method | Dates of the schedule | Crossover: new texts | Mutation: new texts | Reverts | Constant cuts "
+        "| Unique share (last) | Largest share (last) | Mean nodes (last) | Front size (last) | Seconds per generation |")
+    say("|---|---|---|---|---|---|---|---|---|---|---|")
     table = pd.read_csv(PROCESSED / "days_2019.csv")
     train = set(table["date"][table["split"] == "train"])
     schedules = []
@@ -207,11 +210,13 @@ def short_searches():
         schedules.append(dates)
         assert set(dates) <= train and len(set(dates)) == len(dates)
         total = {k: sum(row[k] for row in run.log) for k in
-                 ("crossover", "crossover changed", "mutation", "mutation changed", "reverts", "constant cuts")}
+                 ("crossover children", "crossover new texts", "mutation children", "mutation new texts", "reverts",
+                  "constant cuts")}
         last = run.log[-1]
-        say(f"| {method} | {', '.join(dates)} | {total['crossover changed']}/{2 * total['crossover']} children | "
-            f"{total['mutation changed']}/{total['mutation']} | {total['reverts']} | {total['constant cuts']} | "
-            f"{last['duplicates']} | {last['mean nodes']:.1f} | {len(last['front'])} | "
+        say(f"| {method} | {', '.join(dates)} | {total['crossover new texts']}/{total['crossover children']} | "
+            f"{total['mutation new texts']}/{total['mutation children']} | {total['reverts']} | "
+            f"{total['constant cuts']} | {last['unique share']:.2f} | {last['largest share']:.2f} | "
+            f"{last['mean nodes']:.1f} | {len(last['front'])} | "
             f"{np.mean([row['seconds'] for row in run.log]):.1f} |")
     assert all(s == schedules[0] for s in schedules)
     say()

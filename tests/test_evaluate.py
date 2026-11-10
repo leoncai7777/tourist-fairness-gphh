@@ -118,6 +118,10 @@ def test_a_test_day_or_a_date_of_unknown_split_is_refused_before_loading(monkeyp
     for date, message in cases.items():
         with pytest.raises(ValueError, match=message):
             Days().get(date)
+    # A label that is not train, validation or test is unknown too.
+    monkeypatch.setattr(evaluate_module, "split_of", lambda year: {"2019-12-18": "holdout"})
+    with pytest.raises(ValueError, match="no known split"):
+        Days().get("2019-12-18")
     monkeypatch.undo()
     assert Days().get("2019-12-18")[0].date == pd.Timestamp("2019-12-18")  # a training day still loads
 

@@ -29,6 +29,7 @@ import random
 import time
 from functools import partial
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 import pandas as pd
@@ -37,7 +38,7 @@ from deap import gp, tools
 from day import PROCESSED
 from evaluate import Days, evaluate
 from gp_rule import H2_SET, HIGH, LOW, MAX_HEIGHT, METHODS, constants, from_text, new_individual, size, to_text, tree_sets
-from single_gphh import grow
+from single_gphh import fingerprint, grow
 
 SCHEDULE = 3  # named random stream for the environment schedule (STAYS is 1, COMPLIANCE 2)
 
@@ -46,8 +47,41 @@ SETTINGS = {"population": 200, "generations": 100, "crossover": 0.8, "mutation":
             "monitor every": 10, "validation replicates": 5}
 
 
+FIRST_TRAINING_REPLICATE = 1000  # validation and test use replicates 0..K-1, so K must stay below this
+SOURCES = [Path(__file__).parent / name for name in
+           ("search.py", "gp_rule.py", "evaluate.py", "features.py", "engine.py", "scoring.py", "day.py", "replay.py")]
+
+
 def settings_hash(settings):
-    return hashlib.sha1(json.dumps(settings, sort_keys=True).encode()).hexdigest()[:10]
+    return hashlib.sha1(json.dumps(dict(settings), sort_keys=True).encode()).hexdigest()[:10]
+
+
+def code_version():
+    """Hash of the code that decides what a run does."""
+    return fingerprint(*SOURCES)
+
+
+def data_version():
+    return json.loads((PROCESSED / "manifest.json").read_text())["version"]
+
+
+def check_settings(settings):
+    """Refuse settings that would quietly change the algorithm, before anything runs."""
+    def whole(name, low):
+        value = settings[name]
+        if isinstance(value, bool) or not isinstance(value, int) or value < low:
+            raise ValueError(f"{name} must be a whole number of at least {low}, not {value!r}")
+    whole("population", 2)
+    whole("generations", 1)
+    whole("monitor every", 1)
+    whole("validation replicates", 1)
+    if settings["validation replicates"] > FIRST_TRAINING_REPLICATE:
+        raise ValueError("validation and test replicates would reach the training replicates")
+    for name in ("crossover", "mutation"):
+        if not (isinstance(settings[name], (int, float)) and math.isfinite(settings[name]) and settings[name] >= 0):
+            raise ValueError(f"{name} must be a finite number of at least 0")
+    if settings["crossover"] + settings["mutation"] > 1:
+        raise ValueError("crossover and mutation add up to more than 1")
 
 
 def search_seed(method, run_number):
@@ -69,7 +103,7 @@ def schedule(run_number, generations):
     order = []
     while len(order) < generations:
         order += [dates[i] for i in rng.permutation(len(dates))]
-    replicates = rng.integers(1000, 1_000_000, generations)  # never the replicates 0..K-1 of validation and test
+    replicates = rng.integers(FIRST_TRAINING_REPLICATE, 1_000_000, generations)  # never validation or test ones
     return [(order[g], int(replicates[g])) for g in range(generations)]
 
 
@@ -192,23 +226,24 @@ def breed(population, settings, counts):
     """N children, drawn per breeding operation as in Step 1: crossover gives two, mutation and
     reproduction one; the list is cut to N in the order made."""
     n = settings["population"]
-    children = []
+    children, kinds = [], []  # kinds: (operator, whether the child's text is new, not a parent's)
     while len(children) < n:
         r = random.random()
         if r < settings["crossover"]:
             p1, p2 = tournament(population), tournament(population)
             made = crossover(p1, p2, counts)
-            counts["crossover"] += 1
-            counts["crossover changed"] += sum(to_text(c) not in (to_text(p1), to_text(p2)) for c in made)
+            kinds += [("crossover", to_text(c) not in (to_text(p1), to_text(p2))) for c in made]
         elif r < settings["crossover"] + settings["mutation"]:
             parent = tournament(population)
             made = [mutation(parent, counts)]
-            counts["mutation"] += 1
-            counts["mutation changed"] += to_text(made[0]) != to_text(parent)
+            kinds.append(("mutation", to_text(made[0]) != to_text(parent)))
         else:
             made = [copy.deepcopy(tournament(population))]
-            counts["reproduction"] += 1
+            kinds.append(("reproduction", False))
         children.extend(made)
+    for kind, new in kinds[:n]:  # only the children kept after the cut to N
+        counts[f"{kind} children"] += 1
+        counts[f"{kind} new texts"] += new
     return children[:n]
 
 
@@ -219,6 +254,8 @@ def breed(population, settings, counts):
 def score(population, date, replicate, days, fallbacks):
     for rule in population:
         result = evaluate(rule, date, replicate, days)
+        if not (math.isfinite(result.mean_r) and math.isfinite(result.g_hat)):
+            raise ValueError(f"non-finite objectives {result.mean_r}, {result.g_hat} on {date}")
         rule.fitness.values = (result.mean_r, result.g_hat)
         for reason, n in result.run.fallbacks.items():
             fallbacks[reason] = fallbacks.get(reason, 0) + n
@@ -242,7 +279,11 @@ class Run:
     method and run numbers. A checkpoint after every generation lets a stopped run resume with the
     same result."""
     def __init__(self, method, run_number, settings=SETTINGS, folder=None, monitor=True):
-        self.method, self.run_number, self.settings = method, run_number, dict(settings)
+        if method not in METHODS:
+            raise ValueError(f"unknown method {method!r}")
+        check_settings(settings)
+        self.method, self.run_number = method, run_number
+        self.settings = MappingProxyType(dict(settings))  # fixed: the schedule below depends on it
         self.schedule = schedule(run_number, self.settings["generations"])
         self.folder = Path(folder) if folder else None
         self.monitor = monitor
@@ -257,22 +298,47 @@ class Run:
         if self.folder is None:
             return
         self.folder.mkdir(parents=True, exist_ok=True)
-        state = {"generation": self.generation, "population": [to_text(r) for r in self.population],
+        scored_on = self.schedule[self.generation - 1] if self.generation else None
+        state = {"method": self.method, "run": self.run_number, "settings": dict(self.settings),
+                 "settings hash": settings_hash(self.settings), "data version": data_version(),
+                 "code version": code_version(), "generation": self.generation,
+                 "population": [to_text(r) for r in self.population],
+                 "fitness": [r.fitness.values for r in self.population], "scored on": scored_on,
                  "random": random.getstate(), "log": self.log, "monitor log": self.monitor_log,
-                 "settings": self.settings, "schedule": self.schedule}
+                 "schedule": self.schedule}
         temporary = self.folder / "checkpoint.tmp"
         temporary.write_bytes(pickle.dumps(state))
         temporary.replace(self.folder / "checkpoint.pkl")
 
     @classmethod
     def resume(cls, method, run_number, folder, monitor=True):
+        """The run saved in folder. Its identity comes from the file; the method and run number given
+        must match it, as must the data and code versions now in use. Nothing is relabelled."""
         state = pickle.loads((Path(folder) / "checkpoint.pkl").read_bytes())
+        settings = state["settings"]
+        check_settings(settings)
+        expected = {"method": method, "run": run_number, "settings hash": settings_hash(settings),
+                    "data version": data_version(), "code version": code_version()}
+        for key, value in expected.items():
+            if state[key] != value:
+                raise ValueError(f"the checkpoint's {key} is {state[key]!r}, not {value!r}")
+        if state["schedule"] != schedule(run_number, settings["generations"]):
+            raise ValueError("the checkpoint's schedule is not this run's")
+        if not 0 <= state["generation"] <= settings["generations"]:
+            raise ValueError("the checkpoint's generation is outside the run")
+        if len(state["population"]) != settings["population"] or len(state["fitness"]) != settings["population"]:
+            raise ValueError("the checkpoint's population has the wrong size")
+        population = [from_text(text) for text in state["population"]]
+        if any(rule.method != method for rule in population):
+            raise ValueError("the checkpoint holds rules of another method")
+        for rule, values in zip(population, state["fitness"]):
+            if values:
+                rule.fitness.values = values
         run = cls.__new__(cls)
-        run.method, run.run_number, run.settings = method, run_number, state["settings"]
+        run.method, run.run_number, run.settings = method, run_number, MappingProxyType(dict(settings))
         run.schedule, run.folder, run.monitor = state["schedule"], Path(folder), monitor
         run.log, run.monitor_log, run.generation = state["log"], state["monitor log"], state["generation"]
-        run.population = [from_text(text) for text in state["population"]]
-        run.validation = Days()
+        run.population, run.validation = population, Days()
         random.setstate(state["random"])  # set after the population is rebuilt (section 13, item 7)
         return run
 
@@ -283,8 +349,9 @@ class Run:
         started = time.time()
         date, replicate = self.schedule[self.generation]
         days = Days()  # this generation's day only; a run reads each training day once per pass
-        counts = {"crossover": 0, "crossover changed": 0, "mutation": 0, "mutation changed": 0,
-                  "reproduction": 0, "reverts": 0, "constant cuts": 0}
+        counts = {"crossover children": 0, "crossover new texts": 0, "mutation children": 0,
+                  "mutation new texts": 0, "reproduction children": 0, "reproduction new texts": 0,
+                  "reverts": 0, "constant cuts": 0}
         fallbacks = {}
         score(self.population, date, replicate, days, fallbacks)
         rank(self.population)
@@ -296,7 +363,9 @@ class Run:
         nodes = [sum(n for n, _ in size(r)) for r in self.population]
         self.log.append({"generation": self.generation, "date": date, "replicate": replicate,
                          "front": sorted(r.fitness.values for r in front), "mean nodes": float(np.mean(nodes)),
-                         "max nodes": max(nodes), "duplicates": len(texts) - len(set(texts)), **counts,
+                         "max nodes": max(nodes), "duplicates": len(texts) - len(set(texts)),
+                         "unique share": len(set(texts)) / len(texts),
+                         "largest share": max(texts.count(t) for t in set(texts)) / len(texts), **counts,
                          "fallbacks": fallbacks, "seconds": time.time() - started})
         if self.monitor and (self.generation + 1) % self.settings["monitor every"] == 0:
             self.watch(front)
@@ -314,6 +383,8 @@ class Run:
 
     def evolve(self, until=None):
         until = self.settings["generations"] if until is None else until
+        if not 0 <= until <= self.settings["generations"]:
+            raise ValueError(f"until must be within the {self.settings['generations']} generations of the schedule")
         while self.generation < until:
             self.step()
         return self.population

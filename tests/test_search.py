@@ -39,8 +39,8 @@ def names(tree):
 
 
 def counts():
-    return {"crossover": 0, "crossover changed": 0, "mutation": 0, "mutation changed": 0, "reproduction": 0,
-            "reverts": 0, "constant cuts": 0}
+    return {f"{kind} {what}": 0 for kind in ("crossover", "mutation", "reproduction")
+            for what in ("children", "new texts")} | {"reverts": 0, "constant cuts": 0}
 
 
 # ---------------------------------------------------------------------- #
@@ -296,3 +296,90 @@ def test_a_run_resumes_from_a_checkpoint_with_the_same_result(tmp_path):
         later.append([to_text(r) for r in resumed.population])
     assert later == texts[1:]
     assert [row["date"] for row in resumed.log] == [d for d, _ in whole.schedule[:3]]
+
+
+# ---------------------------------------------------------------------- #
+# 4. Checkpoints: identity and state (third review)
+# ---------------------------------------------------------------------- #
+
+import pickle  # noqa: E402
+
+
+def saved(tmp_path, method="GP-fixed", number=5):
+    run = Run(method, number, SMALL, folder=tmp_path, monitor=False)
+    run.checkpoint()
+    return run
+
+
+def tamper(tmp_path, change):
+    path = tmp_path / "checkpoint.pkl"
+    state = pickle.loads(path.read_bytes())
+    change(state)
+    path.write_bytes(pickle.dumps(state))
+
+
+@needs_data
+def test_a_checkpoint_is_never_relabelled(tmp_path):
+    saved(tmp_path)
+    Run.resume("GP-fixed", 5, tmp_path, monitor=False)  # the right identity resumes
+    for method, number in (("GP-adaptive", 5), ("GP-fixed", 6)):
+        with pytest.raises(ValueError):
+            Run.resume(method, number, tmp_path, monitor=False)
+    changes = {"data version": lambda s: s.update({"data version": "other"}),
+               "code version": lambda s: s.update({"code version": "other"}),
+               "settings": lambda s: s["settings"].update({"crossover": 0.7}),
+               "schedule": lambda s: s.update({"schedule": schedule(6, SMALL["generations"])}),
+               "another method's rule": lambda s: s["population"].__setitem__(0, "GP-adaptive | h1: AV | h2: 0.5"),
+               "population size": lambda s: s.update({"population": s["population"][:-1],
+                                                      "fitness": s["fitness"][:-1]})}
+    for name, change in changes.items():
+        saved(tmp_path)
+        tamper(tmp_path, change)
+        with pytest.raises(ValueError):
+            Run.resume("GP-fixed", 5, tmp_path, monitor=False)
+
+
+@needs_data
+@pytest.mark.slow
+def test_a_resumed_run_has_the_same_state_also_when_finished(tmp_path):
+    whole = Run("GP-adaptive", 7, SMALL, folder=tmp_path, monitor=False)
+    whole.step()
+    resumed = Run.resume("GP-adaptive", 7, tmp_path, monitor=False)
+    state = lambda run: ([to_text(r) for r in run.population], [r.fitness.values for r in run.population])  # noqa
+    assert state(resumed) == state(whole) and resumed.generation == whole.generation == 1
+    whole.evolve()
+    finished = Run.resume("GP-adaptive", 7, tmp_path, monitor=False)
+    returned = finished.evolve()  # nothing left to run: the saved population, with its scores, comes back
+    assert returned is finished.population and state(finished) == state(whole)
+    assert finished.generation == SMALL["generations"]
+    assert all(r.fitness.valid for r in finished.population)
+
+
+def test_invalid_settings_are_refused_before_the_run():
+    bad = [{"population": 1}, {"population": 2.5}, {"generations": 0}, {"monitor every": 0},
+           {"crossover": 0.9, "mutation": 0.2}, {"crossover": float("nan")}, {"mutation": -0.1},
+           {"validation replicates": 1001}, {"population": True}]
+    for change in bad:
+        with pytest.raises(ValueError):
+            search.check_settings({**SMALL, **change})
+    with pytest.raises(ValueError):
+        Run("GP-other", 0, SMALL, monitor=False)
+
+
+@needs_data
+def test_settings_are_fixed_and_until_stays_in_the_schedule():
+    run = Run("GP-fixed", 0, SMALL, monitor=False)
+    with pytest.raises(TypeError):
+        run.settings["generations"] = 50
+    with pytest.raises(ValueError):
+        run.evolve(until=SMALL["generations"] + 1)
+
+
+def test_non_finite_objectives_are_refused(monkeypatch):
+    class Result:
+        mean_r, g_hat = float("nan"), 0.4
+        run = type("R", (), {"fallbacks": {}})()
+    monkeypatch.setattr(search, "evaluate", lambda *args, **kwargs: Result())
+    rule = from_text("GP-fixed | h1: AV | c: 1.0")
+    with pytest.raises(ValueError):
+        search.score([rule], "2019-01-01", 1000, None, {})

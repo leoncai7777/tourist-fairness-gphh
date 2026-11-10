@@ -74,7 +74,7 @@ class Days:
         date = pd.Timestamp(date)
         if date not in self._cache:
             split = split_of(date.year).get(f"{date:%Y-%m-%d}")
-            if split is None:
+            if split not in ("train", "validation", "test"):  # None or any other label
                 raise ValueError(f"{date:%Y-%m-%d} has no known split; it is not read")
             if split == "test" and not self._test:
                 raise ValueError(f"{date:%Y-%m-%d} is a test day; only the test evaluation of Step 6 reads it")
