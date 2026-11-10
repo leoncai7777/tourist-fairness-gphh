@@ -135,8 +135,11 @@ def sweep_days():
 
     warnings.simplefilter("error")
     dates = list(pd.read_csv(PROCESSED / "days_2019.csv").date) + ["2022-07-14", "2022-01-10", "2023-02-01"]
-    problems = []
+    problems, skipped = [], []
     for date in dates:
+        if not (PROCESSED / f"visits_{date[:4]}.csv.gz").exists():
+            skipped.append(date)  # that year's tables are not here, e.g. in a review package
+            continue
         try:
             day = load_day(date)
             result = replay(day)
@@ -144,7 +147,7 @@ def sweep_days():
             assert (result.person_minutes >= 0).all()
         except Exception as error:  # report every failing day, not only the first
             problems.append(f"{date}: {error!r}")
-    return len(dates), problems
+    return len(dates) - len(skipped), problems, skipped
 
 
 # ---------------------------------------------------------------------- #
@@ -171,8 +174,8 @@ def main():
         print(f"   {status:10} {path}: {meaning}")
 
     print("4. Sweep over days")
-    count, problems = sweep_days()
-    print(f"   {count} days, {len(problems)} with problems")
+    count, problems, skipped = sweep_days()
+    print(f"   {count} days, {len(problems)} with problems" + (f"; skipped (no tables): {skipped}" if skipped else ""))
     for problem in problems[:10]:
         print(f"   {problem}")
 
