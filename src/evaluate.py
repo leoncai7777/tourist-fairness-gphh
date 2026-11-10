@@ -35,8 +35,12 @@ END_REASONS = ["limit", "none feasible", "no observed stop left", "not a followe
 
 @lru_cache(maxsize=None)
 def split_of(year):
-    """Split of each date; 2022 and 2023 are test years and their tables have no split column."""
-    days = pd.read_csv(PROCESSED / f"days_{year}.csv")
+    """Split of each date; 2022 and 2023 are test years and their tables have no split column.
+    Without a table there is nothing to read, and load_day() refuses the date."""
+    path = PROCESSED / f"days_{year}.csv"
+    if not path.exists():
+        return {}
+    days = pd.read_csv(path)
     splits = days["split"] if "split" in days.columns else ["test"] * len(days)
     return dict(zip(days["date"], splits))
 
