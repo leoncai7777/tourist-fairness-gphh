@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
-CHECK_SCRIPTS = ["src/replay_check.py", "src/engine_check.py", "src/features_check.py"]
+CHECK_SCRIPTS = ["src/simulator_check.py", "src/pilot.py"]
 ALLOWED_WARNINGS = ["ignore:Mean of empty slice:RuntimeWarning",
                     "ignore:invalid value encountered in scalar divide:RuntimeWarning"]
 
@@ -100,6 +100,12 @@ MUTATIONS = [
      "change of each part with the wrong sign"),
     ("src/scoring.py", '"completion": g["stops"].sum() / g["observed stops"].sum(),',
      '"completion": (g["stops"] / g["observed stops"]).mean(),', "completion averaged, not pooled"),
+    ("src/rules.py", "engine.day.attractiveness[candidates])\n", "-engine.day.attractiveness[candidates])\n",
+     "POP takes the least attractive site"),
+    ("src/rules.py", "-engine.visits[candidates].astype(float)", "engine.visits[candidates].astype(float)",
+     "LEAST takes the most visited site"),
+    ("src/rules.py", "protected_div(engine.day.attractiveness[candidates], inputs[TA])",
+     "protected_div(engine.day.attractiveness[candidates], inputs[SL])", "SOT divides by the slack"),
     ("src/toptw.py", "feasible &= np.maximum(arrive, instance.opening) + expected + back <= end_time",
      "feasible &= arrive + expected + back <= end_time", "Step 1: no wait for opening"),
 ]

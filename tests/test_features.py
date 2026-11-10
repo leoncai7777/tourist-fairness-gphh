@@ -299,3 +299,30 @@ def test_usual_peak_floor_is_an_option():
     floored = load_day("2019-10-09", peak_floor=10.0)
     assert (floored.usual_peak == np.maximum(plain.usual_peak, 10.0)).all()
     assert (floored.usual_peak > plain.usual_peak).any() and floored.options["peak_floor"] == 10.0
+
+
+# ---------------------------------------------------------------------- #
+# 7. Hand rules (Step 3g)
+# ---------------------------------------------------------------------- #
+
+def rule_choice(rule, walk=None):
+    """v0 leaves site 0 at 640 and chooses between sites 1 and 2. A = (1, 0.4, 0.6); walks 10 and 20
+    minutes; a one-stop visitor entered site 2 at 620, so x = (1, 0, 1); every site closes at 1000."""
+    from rules import RULES
+    day = hand_day([{"route": [0, 1], "entries": [600, 650]},
+                    {"route": [2], "entries": [620], "follows": False, "exits": [630]}], walk=walk)
+    day.attractiveness = np.array([1.0, 0.4, 0.6])
+    run = simulate(day, RULES[rule](), stays=stays([[40, 25, 15], [9, 9, 9]]), check=True)
+    return run.routes[0][1][0]
+
+
+def test_hand_rules_by_hand():
+    assert rule_choice("POP") == 2      # 0.6 > 0.4
+    assert rule_choice("LEAST") == 1    # no visit yet at site 1
+    assert rule_choice("SOT") == 1      # 0.4 / 10 > 0.6 / 20
+    assert rule_choice("SOS") == 2      # slack 350 and 340: 0.4 / 350 < 0.6 / 340
+
+
+def test_sot_with_a_zero_minute_walk_uses_protected_division():
+    # Site 1 is 0 minutes away: A / 0 gives 1 (Step 1's protected division), more than 0.6 / 20.
+    assert rule_choice("SOT", walk=[[0, 0, 20], [0, 0, 10], [20, 10, 0]]) == 1
