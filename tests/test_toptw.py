@@ -63,6 +63,14 @@ def test_waits_for_opening_and_keeps_order():
     assert seen[1]["to"] == [18.0] and seen[1]["ta"] == [10.0]  # the clock is 12 after visiting site 1
 
 
+def test_waiting_for_opening_counts_in_feasibility():
+    """Site 2 is reachable early, but waiting for it to open leaves no time to get back."""
+    instance = line_instance()
+    instance.closing[0] = 70.0
+    instance.opening[2] = 60.0
+    assert solve(instance, highest_score, instance.duration)[1] == [1]
+
+
 def test_second_day_restarts_at_the_depot():
     instance = line_instance()
     instance.closing[0] = 45.0
