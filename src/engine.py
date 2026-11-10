@@ -11,9 +11,20 @@ time, visit ends come first, then arrivals, starts of visits and decisions:
 a deciding visitor has already left its site and is not yet on the way.
 
 A policy has one method, choose(engine, visitor, candidates), and returns one
-of the candidate sites, or None to end the visitor's day. Candidates are site
-indices in ascending order, which is ascending site id, so taking the first
-of equal scores breaks ties by the lowest site id.
+of the candidate sites. Candidates are site indices in ascending order, which
+is ascending site id, so taking the first of equal scores breaks ties by the
+lowest site id. Only a policy with may_stop = True (the observed-order
+control) may return None to end a visitor's day; for any other policy that is
+an error, as the model has no stop action. A policy with per-run state has a
+reset() method, called at the start of every run.
+
+What a policy may read, so that it never sees the future: engine.now,
+engine.inside, engine.on_the_way, engine.visits, engine.run.entries (entries
+already processed), the visitor's place, stops_used, visited, start and
+budget_end, and the day's site statistics, walking times and usual curves.
+Never engine.stays, engine.heap or engine.run.intervals: they hold stays,
+events and fixed intervals that have not happened yet. Read the counts, not
+engine.state, which can lag by one event at the same time.
 
 Usage:  run = simulate(load_day("2019-10-09"), Nearest())
 """
@@ -159,7 +170,9 @@ class Engine:
         if candidates.size == 0:
             return self.finish(k, "none feasible")
         j = self.policy.choose(self, k, candidates)
-        if j is None:  # only the observed-order control ends a day this way
+        if j is None:
+            if not getattr(self.policy, "may_stop", False):
+                raise ValueError("a rule must choose one of the feasible sites; it cannot stop a visitor")
             return self.finish(k, "no observed stop left")
         assert j in candidates, "a policy must choose a feasible site"
         self.on_the_way[j] += 1
@@ -180,6 +193,8 @@ class Engine:
         fixed = self.day.fixed
         rows = zip(fixed.visitor, fixed.entry_index, fixed.entry, fixed.exit)
         self.fixed_lookup = {(k, i): (entry, exit_) for k, i, entry, exit_ in rows}
+        if hasattr(self.policy, "reset"):
+            self.policy.reset()
         self.queue_the_day()
         handlers = {VISIT_END: self.end_visit, ARRIVAL: self.arrive, START: self.start_visit}
         while self.heap:
@@ -229,7 +244,13 @@ class Nearest:
 class ObservedOrder:
     """The observed-order control (3d): the first feasible stop further along the observed route.
     A stop passed over is dropped for good, with its reason saved when it is first passed over."""
+    may_stop = True
+
     def __init__(self):
+        self.position = {}
+
+    def reset(self):
+        """A new run starts at the second observed stop of every visitor."""
         self.position = {}
 
     def choose(self, engine, k, candidates):

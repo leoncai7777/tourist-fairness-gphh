@@ -174,6 +174,24 @@ def test_observed_order_records_stops_left_at_the_end():
     assert run.skips == [(0, 1, "budget"), (0, 2, "budget")]
 
 
+def test_one_observed_order_policy_used_twice_gives_the_same_day():
+    day = hand_day([{"route": [0, 1, 2], "entries": [600, 650, 700]}], closing=(1000, 660, 1000))
+    policy = ObservedOrder()
+    first = simulate(day, policy, stays=stays([[40, 25, 15]]))
+    second = simulate(day, policy, stays=stays([[40, 25, 15]]))
+    assert first.routes == second.routes and first.skips == second.skips and first.end_reason == second.end_reason
+
+
+def test_a_rule_cannot_stop_a_visitor():
+    class Stopper:
+        def choose(self, engine, k, candidates):
+            return None
+
+    day = hand_day([{"route": [0, 1], "entries": [600, 650]}])
+    with pytest.raises(ValueError):
+        simulate(day, Stopper(), stays=stays([[40, 25, 15]]))
+
+
 # ---------------------------------------------------------------------- #
 # 4. Random stays
 # ---------------------------------------------------------------------- #

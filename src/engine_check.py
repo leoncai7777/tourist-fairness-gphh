@@ -62,7 +62,7 @@ def completion(day, run):
 def pilot_days():
     say("## Pilot days")
     say()
-    say("| Date | Followers | Policy | Budget | Events | Completion | Ended early | Overruns "
+    say("| Date | Followers | Policy | Budget | Events | Completion | Ended early | Overrun records "
         "| Skips by reason | Seconds |")
     say("|---|---|---|---|---|---|---|---|---|---|")
     for date in PILOT_DAYS:
@@ -105,12 +105,17 @@ def training_days():
             check_routes(day, run)
             totals[name].update(run.end_reason.values())
             totals[name].update(f"skip: {reason}" for _, _, reason in run.skips)
-            totals[name]["overruns"] += len(run.overruns)
+            totals[name]["overrun records"] += len(run.overruns)
             followers = day.visitors.index[day.visitors.follows]
             stops[name][0] += sum(len(run.routes[k]) for k in followers)
             stops[name][1] += sum(len(day.routes[k]) for k in followers)
-    say(f"- {len(dates)} training days; on every day and for both policies: no negative count, everyone left, "
-        f"every follower finished, every later stop met closing and budget when chosen, one place at a time.")
+    say(f"- {len(dates)} training days, both policies. Debug checks in the engine, after every event: no negative "
+        f"count; at the end of the day: everyone left and every follower finished. Route checks in this script: "
+        f"every later stop met closing and budget when chosen, visits do not overlap and leave time to walk, "
+        f"the stop limit holds.")
+    say("- Lost stops are classed by their first failing reason (calendar, closing, budget); they come from sampled "
+        "stays, closing times and the calendar together and are not causal attributions. An overrun record is one "
+        "visit past closing or past the budget; one visit can give both.")
     for name in totals:
         counts = ", ".join(f"{key} {value:,}" for key, value in sorted(totals[name].items()))
         say(f"- {name}: completion {stops[name][0] / stops[name][1]:.1%}; {counts}; "

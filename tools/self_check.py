@@ -67,6 +67,8 @@ MUTATIONS = [
     ("src/engine.py", "            engine.run.skips.append((k, j, reasons[j]))\n", "            pass\n",
      "observed-order skip not recorded"),
     ("src/engine.py", "if self.stops_used[k] > 1:", "if self.stops_used[k] > 0:", "first stop treated as chosen"),
+    ("src/engine.py", "            self.policy.reset()\n", "            pass\n", "policy state kept between runs"),
+    ("src/engine.py", 'if not getattr(self.policy, "may_stop", False):', "if False:", "any rule may stop a visitor"),
     ("src/toptw.py", "feasible &= np.maximum(arrive, instance.opening) + expected + back <= end_time",
      "feasible &= arrive + expected + back <= end_time", "Step 1: no wait for opening"),
 ]
