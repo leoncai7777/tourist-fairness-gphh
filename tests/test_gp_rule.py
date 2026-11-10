@@ -49,9 +49,9 @@ class Seen(GPRule):
         return out
 
 
-def first_parts(text):
+def first_parts(text, strict=True):
     day, table = terminal_day()
-    policy = Seen(from_text(text))
+    policy = Seen(from_text(text, strict=strict))
     run = simulate(day, policy, stays=table, check=True)
     return policy.seen[0], run
 
@@ -84,7 +84,8 @@ def test_non_finite_outputs_still_give_a_determined_choice():
     big = "RemT"
     for _ in range(9):
         big = f"mul({big}, {big})"  # RemT ** 512 overflows to inf
-    (h1, _, _, _), run = first_parts(f"GP-fixed | h1: sub({big}, {big}) | c: 1.0")
+    # A diagnostic rule over the height limit, so it is built with strict loading off.
+    (h1, _, _, _), run = first_parts(f"GP-fixed | h1: sub({big}, {big}) | c: 1.0", strict=False)
     assert np.isnan(h1).all() and run.routes[0][1][0] == 1  # set to 0, then the lowest site id
     assert run.fallbacks == {"h1: not finite": 2}
 
@@ -125,6 +126,26 @@ def test_constants_are_log_uniform_in_range_and_plain_floats():
     for _ in range(50):
         h2 = new_individual("GP-adaptive")[1]
         assert all(1e-3 <= h2[i].value <= 1e3 for i in constants(h2))
+
+
+def test_invalid_rule_texts_are_refused():
+    bad = ["GP-other | h1: AV | c: 1.0",                     # unknown method
+           "GP-fixed | h1: AV",                              # a part missing
+           "GP-fixed | h1: AV | c: 1.0 | h2: GDAY",          # a part too many
+           "GP-fixed | h1: AV | h2: 1.0",                    # wrong label
+           "GP-fixed | h1: AV | c: nan",                     # not finite
+           "GP-fixed | h1: AV | c: 5000.0",                  # out of range
+           "GP-fixed | h1: add(AV, 0.5) | c: 1.0",           # a constant in h1
+           "GP-adaptive | h1: AV | h2: mul(GDAY, 0.0001)",   # an h2 constant out of range
+           "GP-single | tree: add(AV, 2.0)"]                 # a constant in GP-single
+    deep = "AV"
+    for _ in range(8):
+        deep = f"add({deep}, TA)"
+    bad.append(f"GP-fixed | h1: {deep} | c: 1.0")            # height 8, over the limit
+    for text in bad:
+        with pytest.raises(ValueError):
+            from_text(text)
+    assert to_text(from_text(f"GP-fixed | h1: {deep} | c: 1.0", strict=False)).startswith("GP-fixed")
 
 
 def test_the_run_records_the_rule():

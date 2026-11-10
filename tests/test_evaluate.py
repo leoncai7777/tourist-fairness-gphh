@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from day import PROCESSED  # noqa: E402
+import evaluate as evaluate_module  # noqa: E402
 from evaluate import (Days, budget_cuts, evaluate, grouped, histogram_bin, hourly_peaks,  # noqa: E402
                       share_at_least, visitor_rows)
 from gp_rule import from_text  # noqa: E402
@@ -94,20 +95,70 @@ def test_adaptive_with_a_constant_h2_has_the_objectives_of_fixed():
         assert fixed.visitors.equals(adaptive.visitors)
 
 
+def test_thresholds_outside_the_exact_range_are_refused():
+    r = np.array([-3.0, 0.8, 0.9, 2.1, 7.0])
+    rows = hand_rows(**{"R_v": list(r) + [1.0]}).iloc[:5]
+    table = grouped(rows)
+    for k in range(-40, 41):  # every edge from -2 to 2 matches the direct count
+        assert share_at_least(table, k / 20) == (r >= k / 20).mean()
+    for theta in (2.05, 2.5, 7.0, -2.05, -3.0, 0.82, float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            share_at_least(table, theta)
+
+
 @needs_data
-def test_a_test_day_is_refused():
-    with pytest.raises(ValueError):
-        Days().get("2019-10-16")  # an even ISO week: test
-    with pytest.raises(ValueError):
-        Days().get("2022-07-14")
+def test_a_test_day_or_a_date_of_unknown_split_is_refused_before_loading(monkeypatch):
+    def must_not_load(*args, **kwargs):
+        raise AssertionError("load_day was called")
+    monkeypatch.setattr(evaluate_module, "load_day", must_not_load)
+    cases = {"2019-10-16": "test day",         # an even ISO week
+             "2019-12-25": "no known split",   # not in the 2019 day table
+             "2020-06-01": "no known split",   # no day table for 2020
+             "2022-07-14": "test day" if (PROCESSED / "days_2022.csv").exists() else "no known split"}
+    for date, message in cases.items():
+        with pytest.raises(ValueError, match=message):
+            Days().get(date)
+    monkeypatch.undo()
+    assert Days().get("2019-12-18")[0].date == pd.Timestamp("2019-12-18")  # a training day still loads
 
 
 @needs_data
 def test_the_cache_keeps_settings_apart():
-    plain, floored = Days(), Days(peak_floor=10.0)
-    a, b = plain.get("2019-12-18")[0], floored.get("2019-12-18")[0]
+    plain, floored, span = Days(), Days(peak_floor=10.0), Days(budget="span")
+    a, b, c = plain.get("2019-12-18")[0], floored.get("2019-12-18")[0], span.get("2019-12-18")[0]
     assert plain.get("2019-12-18")[0] is a  # loaded once
     assert (b.usual_peak > a.usual_peak).any() and b.options["peak_floor"] == 10.0
+    assert (c.visitors["budget_limit"] < a.visitors["budget_limit"]).any()
+
+
+def test_a_days_setting_cannot_be_changed():
+    days = Days()
+    with pytest.raises(TypeError):
+        days.options["peak_floor"] = 10.0
+    for name in ("options", "follows", "test"):
+        with pytest.raises(AttributeError):
+            setattr(days, name, None)
+
+
+@needs_data
+def test_changing_the_callers_follows_list_changes_nothing():
+    first = Days().get("2019-12-18")[0]
+    evaluated = first.visitors["visitor"][first.visitors["evaluated"]]
+    chosen = list(evaluated.iloc[:5])
+    days = Days(follows=chosen)
+    chosen.extend(evaluated.iloc[5:10])  # the caller changes its own list afterwards
+    assert days.get("2019-12-18")[0].visitors["follows"].sum() == 5
+
+
+@needs_data
+def test_the_stop_limit_switch_reaches_the_simulation():
+    from rules import Pop
+    days = Days()
+    with_limit = evaluate(Pop(), "2019-12-18", 0, days)
+    without = evaluate(Pop(), "2019-12-18", 0, days, stop_limit=False)
+    assert (with_limit.visitors["stops"] <= with_limit.visitors["observed stops"]).all()
+    assert (without.visitors["stops"] > without.visitors["observed stops"]).any()
+    assert without.run.settings["stop_limit"] is False
 
 
 @needs_data

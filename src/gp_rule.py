@@ -32,6 +32,7 @@ from toptw import protected_div
 
 METHODS = {"GP-single": 0, "GP-fixed": 1, "GP-prop": 2, "GP-adaptive": 3}  # fixed numbers, used in seeds
 LOW, HIGH = 1e-3, 1e3  # range of every constant, for the whole search
+MAX_HEIGHT = 7  # DEAP height of every tree; ECJ depth 8
 SINGLE_TERMINALS = H1_TERMINALS + [t for t in H2_TERMINALS if t not in H1_TERMINALS] + ["VS"]
 GDAY = H2_TERMINALS.index("GDAY")
 
@@ -93,13 +94,45 @@ def to_text(rule):
     return " | ".join([rule.method] + parts)
 
 
-def from_text(text):
+def tree_from_text(text, pset):
+    """A tree from its text. DEAP gives a constant read from text the type float, which no other
+    node has, so mutation could not replace it; it gets the set's own type, like a drawn constant."""
+    tree = gp.PrimitiveTree.from_string(text, pset)
+    for i in constants(tree):
+        tree[i] = gp.Terminal(tree[i].value, False, pset.ret)
+    return tree
+
+
+def from_text(text, strict=True):
+    """A rule from its text. With strict on (always, except for hand-made diagnostic rules in tests),
+    a text that is not a valid rule is refused: unknown method, wrong number or labels of parts,
+    a constant c that is not a finite number in [LOW, HIGH], a constant in h1, a tree over the
+    height limit, or a constant of h2 out of range."""
     method, *parts = text.split(" | ")
+    if method not in METHODS:
+        raise ValueError(f"unknown method {method!r}")
+    labels = [part.split(": ", 1)[0] for part in parts]
+    if labels != LABELS[method]:
+        raise ValueError(f"{method} needs the parts {LABELS[method]}, not {labels}")
     built = []
     for pset, part in zip(tree_sets(method), parts):
         value = part.split(": ", 1)[1]
-        built.append(gp.PrimitiveTree.from_string(value, pset) if pset else float(value))
-    return make_rule(method, built)
+        built.append(tree_from_text(value, pset) if pset else float(value))
+    rule = make_rule(method, built)
+    if strict:
+        for part, pset in zip(rule, tree_sets(method)):
+            if pset is None:
+                if not (math.isfinite(part) and LOW <= part <= HIGH):
+                    raise ValueError(f"c = {part} is outside [{LOW}, {HIGH}]")
+                continue
+            if part.height > MAX_HEIGHT:
+                raise ValueError(f"a tree of height {part.height} is over the limit {MAX_HEIGHT}")
+            values = [part[i].value for i in constants(part)]
+            if values and pset is not H2_SET:
+                raise ValueError("only h2 may hold constants")
+            if not all(math.isfinite(v) and LOW <= v <= HIGH for v in values):
+                raise ValueError(f"a constant of h2 is outside [{LOW}, {HIGH}]")
+    return rule
 
 
 def identity(rule):

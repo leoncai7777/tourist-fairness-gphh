@@ -13,8 +13,10 @@ days built with different settings are never mixed. A test day is refused
 unless the caller says it is the test evaluation of Step 6.
 """
 
+import math
 from dataclasses import dataclass
 from functools import lru_cache
+from types import MappingProxyType
 
 import numpy as np
 import pandas as pd
@@ -55,20 +57,30 @@ def budget_cuts():
 
 
 class Days:
-    """Days and their replays for one setting, loaded once each."""
+    """Days and their replays for one setting, loaded once each. The setting is fixed when the
+    object is made (a copy of follows is kept), so a cached day always matches it."""
     def __init__(self, budget="corrected", same_day=False, peak_floor=None, follows=None, test=False):
-        self.options = {"budget": budget, "same_day": same_day, "peak_floor": peak_floor}
-        self.follows, self.test, self.cache = follows, test, {}
+        self._options = MappingProxyType({"budget": budget, "same_day": same_day, "peak_floor": peak_floor})
+        self._follows = None if follows is None else frozenset(follows)
+        self._test, self._cache = bool(test), {}
+
+    options = property(lambda self: self._options)
+    follows = property(lambda self: self._follows)
+    test = property(lambda self: self._test)
 
     def get(self, date):
+        """A day and its replay. Outside the test evaluation of Step 6, only dates known to be training
+        or validation days are read; a test day or a date of unknown split is refused before loading."""
         date = pd.Timestamp(date)
-        if date not in self.cache:
+        if date not in self._cache:
             split = split_of(date.year).get(f"{date:%Y-%m-%d}")
-            if split == "test" and not self.test:
+            if split is None:
+                raise ValueError(f"{date:%Y-%m-%d} has no known split; it is not read")
+            if split == "test" and not self._test:
                 raise ValueError(f"{date:%Y-%m-%d} is a test day; only the test evaluation of Step 6 reads it")
-            day = load_day(date, follows=self.follows, **self.options)
-            self.cache[date] = (day, replay(day))
-        return self.cache[date]
+            day = load_day(date, follows=self._follows, **self._options)
+            self._cache[date] = (day, replay(day))
+        return self._cache[date]
 
 
 @dataclass
@@ -80,11 +92,12 @@ class Evaluation:
     run: object
 
 
-def evaluate(rule, date, replicate, days, log=False, alpha=ALPHA, beta=BETA):
-    """One rule (an individual of gp_rule, or any policy) on one day and replicate."""
+def evaluate(rule, date, replicate, days, log=False, alpha=ALPHA, beta=BETA, stop_limit=True):
+    """One rule (an individual of gp_rule, or any policy) on one day and replicate. stop_limit off
+    is the sensitivity run without the stop limit."""
     day, observed = days.get(date)
     policy = GPRule(rule, log=log) if isinstance(rule, list) else rule
-    run = simulate(day, policy, replicate=replicate)
+    run = simulate(day, policy, replicate=replicate, stop_limit=stop_limit)
     v, g_hat, c = score_day(day, run, observed, alpha, beta)
     return Evaluation(float(summary(v, alpha, beta)["all"]["mean R_v"]), float(g_hat), v, c, run)
 
@@ -140,9 +153,13 @@ def grouped(rows):
 
 
 def share_at_least(table, theta):
-    """Share of visitors with R_v >= theta from grouped histograms; theta must be a bin edge."""
+    """Share of visitors with R_v >= theta from grouped histograms. Only the bin edges from -2 to 2
+    can be answered exactly: beyond them the open end bins hold everything, so other values are refused."""
+    if not math.isfinite(theta) or not -2 <= theta <= 2:
+        raise ValueError(f"theta {theta} is outside -2 to 2, where the histogram cannot answer exactly")
     edge = round(theta * BINS_PER_UNIT)
-    assert abs(edge - theta * BINS_PER_UNIT) < 1e-9, "theta must be a multiple of 0.05"
+    if abs(edge - theta * BINS_PER_UNIT) > 1e-9:
+        raise ValueError(f"theta {theta} is not a bin edge (a multiple of 0.05)")
     columns = [c for c in table.columns if c.startswith("bin ") and int(c.split()[1]) >= edge]
     return table[columns].to_numpy().sum() / table["visitors"].sum()
 

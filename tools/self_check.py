@@ -119,13 +119,37 @@ MUTATIONS = [
     ("src/gp_rule.py", "else float(value))", "else round(float(value), 3))", "constants rebuilt with lost digits"),
     ("src/gp_rule.py", "w = self.functions[1](*h2_values)", "w = self.functions[1](*h2_values) + 1",
      "adaptive weight off by one"),
-    ("src/evaluate.py", 'if split == "test" and not self.test:', "if False:", "a test day is read"),
+    ("src/evaluate.py", 'if split == "test" and not self._test:', "if False:", "a test day is read"),
     ("src/evaluate.py", "    k = np.where(r < k / BINS_PER_UNIT, k - 1, k)\n", "", "histogram edges left to r * 20"),
     ("src/evaluate.py", 'g["ended early"] = (rows["stops"] < rows["observed stops"])',
      'g["ended early"] = (rows["stops"] <= rows["observed stops"])', "everyone counted as ending early"),
     ("src/evaluate.py", '"same_day": same_day, "peak_floor": peak_floor}', '"same_day": same_day}',
      "the cache ignores the peak bound"),
     ("src/evaluate.py", "int(c.split()[1]) >= edge]", "int(c.split()[1]) > edge]", "share at theta misses the edge bin"),
+    ("src/evaluate.py", "            if split is None:\n", "            if False:\n", "a date of unknown split is read"),
+    ("src/evaluate.py", "frozenset(follows)", "follows", "the caller's follows list is kept, not copied"),
+    ("src/evaluate.py", "not -2 <= theta <= 2", "False", "thresholds beyond the open bins answered"),
+    ("src/evaluate.py", "replicate=replicate, stop_limit=stop_limit)", "replicate=replicate)",
+     "the stop-limit switch is dropped"),
+    ("src/gp_rule.py", "if values and pset is not H2_SET:", "if False:", "a constant in h1 is accepted"),
+    ("src/gp_rule.py", "        tree[i] = gp.Terminal(tree[i].value, False, pset.ret)\n", "        pass\n",
+     "constants read from text keep the type float"),
+    ("src/search.py", "        a[1], b[1] = b[1], a[1]\n    children = []", "    children = []",
+     "GP-fixed crossover keeps the constants"),
+    ("src/search.py", "        score(self.population, date, replicate, days, fallbacks)\n", "",
+     "parents not re-scored in the new environment"),
+    ("src/search.py", "return a if a.rank < b.rank else b", "return a if a.rank > b.rank else b",
+     "tournament prefers the worse rank"),
+    ("src/search.py", "        if too_high(child):\n            counts[\"reverts\"] += 1\n            child = copy.deepcopy(random.choice((p1, p2)))",
+     "        if False:\n            pass", "crossover keeps children over the height limit"),
+    ("src/search.py", "rng.permutation(len(dates))", "range(len(dates))", "the schedule is not shuffled"),
+    ("src/search.py", "rng.integers(1000, 1_000_000, generations)", "rng.integers(0, 1_000_000, generations)",
+     "training may use validation replicates"),
+    ("src/search.py", "        random.seed(search_seed(method, run_number))\n", "", "the search is not seeded"),
+    ("src/search.py", '        random.setstate(state["random"])', "        pass", "a resumed run loses its random state"),
+    ("src/search.py", "partial(grow, min_=0, max_=4)", "partial(grow, min_=1, max_=4)",
+     "h2 mutation cannot make a one-node tree"),
+    ("src/search.py", "        new = min(max(new, LOW), HIGH)\n", "", "constants not cut to the range"),
     ("src/toptw.py", "feasible &= np.maximum(arrive, instance.opening) + expected + back <= end_time",
      "feasible &= arrive + expected + back <= end_time", "Step 1: no wait for opening"),
 ]
@@ -177,10 +201,14 @@ def run_tests_in_copy(path=None, text=None, bug=None):
         no_cache = shutil.ignore_patterns("__pycache__")
         shutil.copytree(ROOT / "src", copy / "src", ignore=no_cache)
         shutil.copytree(ROOT / "tests", copy / "tests", ignore=no_cache)
+        shutil.copy(ROOT / "pytest.ini", copy / "pytest.ini")
         (copy / "data").symlink_to(ROOT / "data")  # read-only use of the real data
         if path is not None:
             (copy / path).write_text((ROOT / path).read_text().replace(text, bug))
-        return run(pytest_command(), cwd=copy)
+        command = pytest_command()
+        if path is not None and path != "src/search.py":
+            command += ["-m", "not slow"]  # the short searches in subprocesses catch bugs of the search only
+        return run(command, cwd=copy)
 
 
 def classify(result):
@@ -263,7 +291,7 @@ def main():
     for path, meaning, status in mutations:
         print(f"   {status:10} {path}: {meaning}")
 
-    print("4. Sweep over days")
+    print("4. Sweep over days (load_day and replay; not a GP evaluation of every day)")
     count, problems, skipped = sweep_days()
     print(f"   {count} days, {len(problems)} with problems" + (f"; skipped (no tables): {skipped}" if skipped else ""))
     for problem in problems[:10]:
