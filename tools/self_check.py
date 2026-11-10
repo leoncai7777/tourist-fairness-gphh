@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
-CHECK_SCRIPTS = ["src/replay_check.py"]
+CHECK_SCRIPTS = ["src/replay_check.py", "src/engine_check.py"]
 ALLOWED_WARNINGS = ["ignore:Mean of empty slice:RuntimeWarning",
                     "ignore:invalid value encountered in scalar divide:RuntimeWarning"]
 
@@ -51,6 +51,22 @@ MUTATIONS = [
      "occupancy runs to the next entry"),
     ("src/preprocess.py", "nodes = np.searchsorted(minutes, part.t.values, side=\"left\")",
      "nodes = np.searchsorted(minutes, np.floor(part.t.values), side=\"left\")", "seconds rounded down"),
+    ("src/engine.py", "VISIT_END, ARRIVAL, START, DECISION = 0, 1, 2, 3",
+     "VISIT_END, ARRIVAL, START, DECISION = 0, 3, 2, 1", "decisions before arrivals at the same time"),
+    ("src/engine.py", "        self.on_the_way[j] -= 1\n", "        pass\n", "arrival not taken off the way"),
+    ("src/engine.py", "if self.now >= self.day.opening[j]:", "if True:", "no wait for opening"),
+    ("src/engine.py", "self.stops_used[k] >= self.stop_limit[k]", "self.stops_used[k] > self.stop_limit[k]",
+     "stop limit off by one"),
+    ("src/engine.py", 'reason[finish > self.budget_end[k]] = "budget"',
+     'reason[finish > self.budget_end[k] + 1e9] = "budget"', "budget not checked"),
+    ("src/engine.py", 'reason[finish > day.closing] = "closing"', 'reason[start > day.closing] = "closing"',
+     "closing checked on the start"),
+    ("src/engine.py", "        return row[1] > row[0]\n", "        return True\n", "zero-length entry counted inside"),
+    ("src/engine.py", "np.maximum(MIN_STAY, day.stay * (1 + 0.2 * z))", "np.maximum(0.0, day.stay * (1 + 0.2 * z))",
+     "no 1-minute floor on stays"),
+    ("src/engine.py", "            engine.run.skips.append((k, j, reasons[j]))\n", "            pass\n",
+     "observed-order skip not recorded"),
+    ("src/engine.py", "if self.stops_used[k] > 1:", "if self.stops_used[k] > 0:", "first stop treated as chosen"),
     ("src/toptw.py", "feasible &= np.maximum(arrive, instance.opening) + expected + back <= end_time",
      "feasible &= arrive + expected + back <= end_time", "Step 1: no wait for opening"),
 ]
