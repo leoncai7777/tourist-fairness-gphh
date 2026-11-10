@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
-CHECK_SCRIPTS = ["src/simulator_check.py", "src/pilot.py"]
+CHECK_SCRIPTS = ["src/simulator_check.py", "src/pilot.py", "src/search_check.py"]
 ALLOWED_WARNINGS = ["ignore:Mean of empty slice:RuntimeWarning",
                     "ignore:invalid value encountered in scalar divide:RuntimeWarning"]
 
@@ -119,6 +119,13 @@ MUTATIONS = [
     ("src/gp_rule.py", "else float(value))", "else round(float(value), 3))", "constants rebuilt with lost digits"),
     ("src/gp_rule.py", "w = self.functions[1](*h2_values)", "w = self.functions[1](*h2_values) + 1",
      "adaptive weight off by one"),
+    ("src/evaluate.py", 'if split == "test" and not self.test:', "if False:", "a test day is read"),
+    ("src/evaluate.py", "    k = np.where(r < k / BINS_PER_UNIT, k - 1, k)\n", "", "histogram edges left to r * 20"),
+    ("src/evaluate.py", 'g["ended early"] = (rows["stops"] < rows["observed stops"])',
+     'g["ended early"] = (rows["stops"] <= rows["observed stops"])', "everyone counted as ending early"),
+    ("src/evaluate.py", '"same_day": same_day, "peak_floor": peak_floor}', '"same_day": same_day}',
+     "the cache ignores the peak bound"),
+    ("src/evaluate.py", "int(c.split()[1]) >= edge]", "int(c.split()[1]) > edge]", "share at theta misses the edge bin"),
     ("src/toptw.py", "feasible &= np.maximum(arrive, instance.opening) + expected + back <= end_time",
      "feasible &= arrive + expected + back <= end_time", "Step 1: no wait for opening"),
 ]
