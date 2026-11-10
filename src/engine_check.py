@@ -62,7 +62,8 @@ def completion(day, run):
 def pilot_days():
     say("## Pilot days")
     say()
-    say("| Date | Followers | Policy | Budget | Events | Completion | Ended early | Overruns | Skips by reason | Seconds |")
+    say("| Date | Followers | Policy | Budget | Events | Completion | Ended early | Overruns "
+        "| Skips by reason | Seconds |")
     say("|---|---|---|---|---|---|---|---|---|---|")
     for date in PILOT_DAYS:
         for budget in ("corrected", "span"):
