@@ -472,39 +472,68 @@ def knee(points, sizes, texts):
     return min(beyond, key=lambda i: (-side * cross(points[i]) / length, *order(i)))
 
 
+def validation_means(population, dates, k, days):
+    """Each rule's validation mean of both objectives: the mean over days and replicates of the day's
+    objectives (not visitors pooled over days). Every evaluation and every mean must be finite; a bad
+    one stops the run here, before any front is formed, so it can never drop out as a dominated point."""
+    means = []
+    for rule in population:
+        results = []
+        for date in dates:
+            for r in range(k):
+                result = evaluate(rule, date, r, days)
+                if not (math.isfinite(result.mean_r) and math.isfinite(result.g_hat)):
+                    raise ValueError(f"rule {identity(rule)} on {date}, replicate {r}: non-finite objectives "
+                                     f"({result.mean_r}, {result.g_hat})")
+                results.append(result)
+        mean = (float(np.mean([x.mean_r for x in results])), float(np.mean([x.g_hat for x in results])))
+        if not all(math.isfinite(v) for v in mean):
+            raise ValueError(f"rule {identity(rule)}: non-finite validation mean {mean}")
+        means.append(mean)
+    return means
+
+
 def finish(run, folder=None, value_range=RANGE):
     """Section 5: the final population re-evaluated on all validation days with replicates 0..K-1; the
-    front of the validation means; its hypervolume and knee; and the outputs for RQ2 and RQ3. The front
-    rules are run again on the same days and replicates to make their outputs (the same results, as an
-    evaluation is deterministic); the knee rule's run keeps the decision log. Test days are not read."""
+    front of the validation means; its hypervolume and knee; and the outputs for RQ2 and RQ3.
+
+    The population may hold copies of one rule (duplicates are not removed in the search). The front,
+    hypervolume and knee use every member, as designed; the research outputs are made once per distinct
+    rule text, with the number of copies, so no rule's visitors are counted twice. Two different texts
+    with equal objectives stay two rules. The front rules are run again on the same days and replicates
+    to make their outputs (the same results, as an evaluation is deterministic); the knee rule's run
+    keeps the decision log. Test days are not read."""
     if run.generation != run.settings["generations"]:
         raise ValueError("the run has not finished its generations")
     k = run.settings["validation replicates"]
     dates, days = validation_dates(), Days()
     population = run.population
-    means = []
-    for rule in population:
-        results = [evaluate(rule, date, r, days) for date in dates for r in range(k)]
-        means.append((float(np.mean([x.mean_r for x in results])), float(np.mean([x.g_hat for x in results]))))
+    means = validation_means(population, dates, k, days)
     front = non_dominated(means)
     points = normalise([means[i] for i in front], value_range)
     area, outside = hypervolume(points)
     texts = [to_text(population[i]) for i in front]
     sizes = [sum(n for n, _ in size(population[i])) for i in front]
-    knee_rule = front[knee(points, sizes, texts)]
+    knee_text = texts[knee(points, sizes, texts)]
 
-    identity_columns = {"method": run.method, "run": run.run_number}
+    tag_run = {"method": run.method, "run": run.run_number, "settings hash": settings_hash(run.settings),
+               "code version": code_version(), "data version": data_version()}
+    copies = {text: texts.count(text) for text in texts}
+    distinct = list(dict.fromkeys(texts))  # each rule once, in front order
+    first = {text: texts.index(text) for text in distinct}
     front_rows, groups, peaks, visitors, decisions, hourly = [], [], [], [], [], []
-    for i, point in zip(front, points):
-        rule, rule_id, is_knee = population[i], identity(population[i]), i == knee_rule
-        front_rows.append({**identity_columns, "rule": rule_id, "text": to_text(rule), "mean R_v": means[i][0],
-                           "G_hat": means[i][1], "f1": point[0], "f2": point[1],
+    for text in distinct:
+        i = front[first[text]]
+        rule, rule_id, is_knee = population[i], identity(population[i]), text == knee_text
+        point = points[first[text]]
+        front_rows.append({**tag_run, "rule": rule_id, "text": text, "copies": copies[text],
+                           "mean R_v": means[i][0], "G_hat": means[i][1], "f1": point[0], "f2": point[1],
                            "nodes": sum(n for n, _ in size(rule)), "knee": is_knee})
         for date in dates:
             day = days.get(date)[0]
             for r in range(k):
                 result = evaluate(rule, date, r, days, log=is_knee)
-                tag = {**identity_columns, "rule": rule_id, "date": date, "replicate": r}
+                tag = {**tag_run, "rule": rule_id, "date": date, "replicate": r}
                 rows = visitor_rows(day, result)
                 groups.append(grouped(rows).assign(**tag))
                 peaks.append(hourly_peaks(day, result.crowding).assign(**tag))
@@ -513,11 +542,9 @@ def finish(run, folder=None, value_range=RANGE):
                     decisions.append(pd.DataFrame(result.run.decisions).assign(**tag))
                     table = pd.DataFrame(result.crowding, columns=[f"hour {h}" for h in range(24)])
                     hourly.append(table.assign(site=day.site_ids, **tag))
-    summary = {**identity_columns, "settings hash": settings_hash(run.settings), "data version": data_version(),
-               "code version": code_version(), "validation days": len(dates), "replicates": k,
-               "range": value_range, "hypervolume": area, "front size": len(front),
-               "front points not better than the reference": outside,
-               "knee rule": identity(population[knee_rule])}
+    summary = {**tag_run, "validation days": len(dates), "replicates": k, "range": value_range,
+               "hypervolume": area, "front members": len(front), "front rules": len(distinct),
+               "front points not better than the reference": outside, "knee rule": identity_of_text(knee_text)}
     out = {"summary": summary, "means": means, "front": pd.DataFrame(front_rows),
            "groups": pd.concat(groups, ignore_index=True), "peaks": pd.concat(peaks, ignore_index=True),
            "knee visitors": pd.concat(visitors, ignore_index=True),
@@ -528,8 +555,12 @@ def finish(run, folder=None, value_range=RANGE):
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "summary.json").write_text(json.dumps(summary, indent=1))
         pd.DataFrame({"text": [to_text(r) for r in population], "mean R_v": [m[0] for m in means],
-                      "G_hat": [m[1] for m in means]}).assign(**identity_columns).to_csv(
+                      "G_hat": [m[1] for m in means]}).assign(**tag_run).to_csv(
             folder / "final_population.csv", index=False)
         for name in ("front", "groups", "peaks", "knee visitors", "knee decisions", "knee hourly"):
             out[name].to_csv(folder / f"{name.replace(' ', '_')}.csv.gz", index=False)
     return out
+
+
+def identity_of_text(text):
+    return identity(from_text(text))

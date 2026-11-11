@@ -108,9 +108,9 @@ def timing():
             f"{g['inputs and tree'].mean():.3f} | {g['scoring'].mean():.3f} | {g['total'].mean():.3f} | "
             f"{g['total'].max():.3f} |")
     say()
-    per_run = 2 * N * G + 35 * N * K + (G // 10) * F * 7 + 35 * K
+    per_run = 2 * N * G + 35 * N * K + (G // 10) * F * 7 + 35 * K * F  # the last: front re-run, knee included
     test = 181 * F * K
-    say(f"With N = {N}, G = {G}, K = {K} and a front of about F = {F} rules, a run is about {per_run:,} evaluations "
+    say(f"With N = {N}, G = {G}, K = {K} and a front of about F = {F} distinct rules, a run is about {per_run:,} evaluations "
         f"and the test evaluation of one run about {test:,} (section 3).")
     say()
     say("| Seconds per evaluation | One run (hours) | 90 runs (core-hours) | 90 runs on 9 cores (hours) | "
@@ -245,7 +245,7 @@ def end_of_run(run):
         sizes = {p.name: p.stat().st_size for p in Path(folder).iterdir()}
     n, k, f = len(run.population), run.settings["validation replicates"], len(out["front"])
     evaluations = 35 * k * (n + f)
-    assert len(out["front"]) == len(non_dominated(out["means"])) and out["front"]["knee"].sum() == 1
+    assert out["front"]["copies"].sum() == len(non_dominated(out["means"])) and out["front"]["knee"].sum() == 1
     s = out["summary"]
     say(f"Population {n}, validation replicates K = {k}, 35 validation days: {evaluations:,} evaluations "
         f"(the population, then the {f} front rules again for their outputs) in {seconds:.0f} s, "

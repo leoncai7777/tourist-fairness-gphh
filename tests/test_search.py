@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from deap import gp
 
@@ -490,12 +491,15 @@ def test_the_end_of_a_run(tmp_path):
     run.evolve()
     out = finish(run, tmp_path)
     means, front = out["means"], out["front"]
-    assert len(means) == 4 and len(front) == len(non_dominated(means)) and front["knee"].sum() == 1
-    assert sorted(zip(front["mean R_v"], front["G_hat"])) == sorted(means[i] for i in non_dominated(means))
+    members = non_dominated(means)
+    distinct = {to_text(run.population[i]) for i in members}
+    assert len(means) == 4 and len(front) == len(distinct) and front["knee"].sum() == 1
+    assert front["copies"].sum() == len(members) == out["summary"]["front members"]
     dates = validation_dates()
     for name in ("groups", "peaks", "knee visitors", "knee decisions", "knee hourly"):
         table = out[name]
-        assert {"method", "run", "rule", "date", "replicate"} <= set(table.columns)
+        assert {"method", "run", "rule", "date", "replicate", "settings hash", "code version",
+                "data version"} <= set(table.columns)
         assert set(table["date"]) <= set(dates)
     groups = out["groups"]
     assert set(groups["date"]) == set(dates) and set(groups["rule"]) == set(front["rule"])
@@ -509,3 +513,65 @@ def test_the_end_of_a_run(tmp_path):
     assert len(out["knee hourly"]) == 35 * 15
     for name in ("summary.json", "front.csv.gz", "groups.csv.gz", "knee_decisions.csv.gz"):
         assert (tmp_path / name).exists()
+
+
+
+class Stub:
+    """A stand-in evaluation result."""
+    def __init__(self, mean_r, g_hat):
+        self.mean_r, self.g_hat = mean_r, g_hat
+
+
+def stub_evaluate(values):
+    """evaluate() replaced: (rule text, date, replicate) -> (mean R_v, G_hat)."""
+    def fake(rule, date, r, days, **kwargs):
+        return Stub(*values[(to_text(rule), date, r)])
+    return fake
+
+
+def test_the_front_uses_validation_means_of_daily_objectives(monkeypatch):
+    a = from_text("GP-fixed | h1: AV | c: 0.5")
+    b = from_text("GP-fixed | h1: TA | c: 0.5")
+    c = from_text("GP-fixed | h1: DUR | c: 0.5")
+    a.fitness.values, b.fitness.values = (2.0, 0.1), (0.1, 0.9)  # on the last training day A was best
+    dates, values = ["d1", "d2"], {}
+    for r in range(2):
+        values[(to_text(a), "d1", r)] = values[(to_text(a), "d2", r)] = (0.5, 0.6)
+        values[(to_text(b), "d1", r)] = values[(to_text(b), "d2", r)] = (0.9, 0.4)
+        values[(to_text(c), "d1", r)], values[(to_text(c), "d2", r)] = (1.0, 0.3), (0.0, 0.5)
+    monkeypatch.setattr(search, "evaluate", stub_evaluate(values))
+    means = search.validation_means([a, b, c], dates, 2, None)
+    # C's days count equally (a quiet and a busy day weigh the same), not by visitors pooled over days.
+    assert means == [(0.5, 0.6), (0.9, 0.4), (0.5, 0.4)]
+    assert non_dominated(means) == [1]  # A, best on the last training day, is dominated on validation
+
+
+def test_non_finite_validation_results_stop_the_run_before_the_front(monkeypatch):
+    good, bad = from_text("GP-fixed | h1: AV | c: 0.5"), from_text("GP-fixed | h1: TA | c: 0.5")
+    for bad_value in ((float("-inf"), 0.9), (float("inf"), 0.1), (0.5, float("nan"))):
+        values = {(to_text(good), "d1", 0): (1.0, 0.2), (to_text(bad), "d1", 0): bad_value}
+        monkeypatch.setattr(search, "evaluate", stub_evaluate(values))
+        with pytest.raises(ValueError, match="on d1, replicate 0: non-finite"):  # stopped at the evaluation
+            search.validation_means([good, bad], ["d1"], 1, None)
+
+
+@needs_data
+@pytest.mark.slow
+def test_copies_of_a_rule_are_exported_once(tmp_path):
+    tiny = {**SMALL, "population": 4, "generations": 1, "validation replicates": 1}
+    run = Run("GP-fixed", 0, tiny, monitor=False)
+    a, b, c = ("GP-fixed | h1: AV | c: 0.5", "GP-fixed | h1: max(AV, AV) | c: 0.5", "GP-fixed | h1: TA | c: 0.5")
+    run.population = [from_text(t) for t in (a, a, b, c)]  # B differs from A in text only
+    run.generation = 1
+    out = finish(run, tmp_path)
+    assert len(pd.read_csv(tmp_path / "final_population.csv")) == 4
+    front = out["front"].set_index("text")
+    assert out["means"][0] == out["means"][1] == out["means"][2]  # A, its copy and B score the same
+    assert front.loc[a, "copies"] == 2 and front.loc[b, "copies"] == 1  # A once; B kept as its own rule
+    keys = ["rule", "date", "replicate", "follows", "arrival group", "budget group", "stop group"]
+    assert not out["groups"].duplicated(keys).any()
+    assert not out["peaks"].duplicated(["rule", "date", "replicate", "site"]).any()
+    knee_id = out["front"].loc[out["front"]["knee"], "rule"].iloc[0]
+    knee_groups = out["groups"][out["groups"]["rule"] == knee_id]
+    assert knee_groups["visitors"].sum() == len(out["knee visitors"])
+    assert out["summary"]["front members"] == out["front"]["copies"].sum()
