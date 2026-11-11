@@ -483,9 +483,13 @@ def test_finishing_is_refused_before_the_last_generation():
         finish(run)
 
 
+FEW_DATES = ["2019-01-28", "2019-06-19", "2019-11-08"]  # three validation days; search_check.py runs all 35
+
+
 @needs_data
 @pytest.mark.slow
-def test_the_end_of_a_run(tmp_path):
+def test_the_end_of_a_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(search, "validation_dates", lambda: FEW_DATES)
     tiny = {**SMALL, "population": 4, "generations": 1, "validation replicates": 1}
     run = Run("GP-adaptive", 3, tiny, monitor=False)
     run.evolve()
@@ -495,7 +499,8 @@ def test_the_end_of_a_run(tmp_path):
     distinct = {to_text(run.population[i]) for i in members}
     assert len(means) == 4 and len(front) == len(distinct) and front["knee"].sum() == 1
     assert front["copies"].sum() == len(members) == out["summary"]["front members"]
-    dates = validation_dates()
+    dates = FEW_DATES
+    assert set(FEW_DATES) <= set(validation_dates())
     for name in ("groups", "peaks", "knee visitors", "knee decisions", "knee hourly"):
         table = out[name]
         assert {"method", "run", "rule", "date", "replicate", "settings hash", "code version",
@@ -510,7 +515,7 @@ def test_the_end_of_a_run(tmp_path):
         assert rebuilt == pytest.approx(front.loc[front["rule"] == rule_id, "mean R_v"].iloc[0], rel=1e-12)
     knee_id = front.loc[front["knee"], "rule"].iloc[0]
     assert set(out["knee decisions"]["rule"]) == {knee_id} and len(out["knee decisions"]) > 0
-    assert len(out["knee hourly"]) == 35 * 15
+    assert len(out["knee hourly"]) == len(FEW_DATES) * 15
     for name in ("summary.json", "front.csv.gz", "groups.csv.gz", "knee_decisions.csv.gz"):
         assert (tmp_path / name).exists()
 
@@ -557,7 +562,8 @@ def test_non_finite_validation_results_stop_the_run_before_the_front(monkeypatch
 
 @needs_data
 @pytest.mark.slow
-def test_copies_of_a_rule_are_exported_once(tmp_path):
+def test_copies_of_a_rule_are_exported_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(search, "validation_dates", lambda: FEW_DATES)
     tiny = {**SMALL, "population": 4, "generations": 1, "validation replicates": 1}
     run = Run("GP-fixed", 0, tiny, monitor=False)
     a, b, c = ("GP-fixed | h1: AV | c: 0.5", "GP-fixed | h1: max(AV, AV) | c: 0.5", "GP-fixed | h1: TA | c: 0.5")
