@@ -163,6 +163,11 @@ MUTATIONS = [
      "        if False:\n", "non-finite objectives enter the sorting"),
     ("src/evaluate.py", 'if split not in ("train", "validation", "test"):', "if False:",
      "a date of unknown split, or an unknown label, is read"),
+    ("src/search.py", 'fingerprint(*sorted(Path(__file__).parent.glob("*.py")))',
+     'fingerprint(Path(__file__), Path(__file__).parent / "gp_rule.py")',
+     "the code version leaves out dependencies of the search"),
+    ("src/search.py", '        if state["scored on"] != scored_on:\n', "        if False:\n",
+     "scores from another environment resume"),
     ("src/toptw.py", "feasible &= np.maximum(arrive, instance.opening) + expected + back <= end_time",
      "feasible &= arrive + expected + back <= end_time", "Step 1: no wait for opening"),
 ]

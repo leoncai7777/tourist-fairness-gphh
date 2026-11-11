@@ -7,6 +7,7 @@ Run:  python3 -m pytest tests -q   (from the repository root)
 import copy
 import json
 import random
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -383,3 +384,48 @@ def test_non_finite_objectives_are_refused(monkeypatch):
     rule = from_text("GP-fixed | h1: AV | c: 1.0")
     with pytest.raises(ValueError):
         search.score([rule], "2019-01-01", 1000, None, {})
+
+
+SAVE = """
+import sys
+sys.path.insert(0, "src")
+from search import Run
+Run("GP-fixed", 5, {settings}, folder="saved", monitor=False).checkpoint()
+"""
+RESUME = """
+import sys
+sys.path.insert(0, "src")
+from search import Run
+try:
+    Run.resume("GP-fixed", 5, "saved", monitor=False)
+    print("resumed")
+except ValueError as error:
+    print("refused:", error)
+"""
+
+
+@needs_data
+def test_a_change_to_a_dependency_of_the_search_refuses_the_resume(tmp_path):
+    """Only single_gphh.py changes (it holds grow(), used by mutation); the resume must be refused.
+    An untouched copy resumes."""
+    results = {}
+    for name, change in (("changed", True), ("untouched", False)):
+        copy_ = tmp_path / name
+        shutil.copytree(ROOT / "src", copy_ / "src", ignore=shutil.ignore_patterns("__pycache__"))
+        (copy_ / "data").symlink_to(ROOT / "data")
+        subprocess.run([sys.executable, "-c", SAVE.format(settings=repr(SMALL))], cwd=copy_, check=True)
+        if change:
+            path = copy_ / "src" / "single_gphh.py"
+            path.write_text(path.read_text() + "\n# a change after the checkpoint\n")
+        out = subprocess.run([sys.executable, "-c", RESUME], cwd=copy_, capture_output=True, text=True, check=True)
+        results[name] = out.stdout.strip()
+    assert results["changed"].startswith("refused: the checkpoint's code version")
+    assert results["untouched"] == "resumed"
+
+
+@needs_data
+def test_scores_from_another_environment_are_refused(tmp_path):
+    saved(tmp_path)
+    tamper(tmp_path, lambda s: s.update({"scored on": ("2019-01-01", 1000)}))
+    with pytest.raises(ValueError):
+        Run.resume("GP-fixed", 5, tmp_path, monitor=False)

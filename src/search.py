@@ -47,9 +47,7 @@ SETTINGS = {"population": 200, "generations": 100, "crossover": 0.8, "mutation":
             "monitor every": 10, "validation replicates": 5}
 
 
-FIRST_TRAINING_REPLICATE = 1000  # validation and test use replicates 0..K-1, so K must stay below this
-SOURCES = [Path(__file__).parent / name for name in
-           ("search.py", "gp_rule.py", "evaluate.py", "features.py", "engine.py", "scoring.py", "day.py", "replay.py")]
+FIRST_TRAINING_REPLICATE = 1000  # validation and test use replicates 0..K-1, so K must be at most 1000
 
 
 def settings_hash(settings):
@@ -57,8 +55,10 @@ def settings_hash(settings):
 
 
 def code_version():
-    """Hash of the code that decides what a run does."""
-    return fingerprint(*SOURCES)
+    """Hash of every Python file in src/. A run depends on more than the files it imports directly
+    (grow() in single_gphh.py, protected division in toptw.py, gini_hat() in preprocess.py), so all
+    of them are taken; an unrelated edit also makes old checkpoints refuse to resume, which is safe."""
+    return fingerprint(*sorted(Path(__file__).parent.glob("*.py")))
 
 
 def data_version():
@@ -328,6 +328,12 @@ class Run:
             raise ValueError("the checkpoint's generation is outside the run")
         if len(state["population"]) != settings["population"] or len(state["fitness"]) != settings["population"]:
             raise ValueError("the checkpoint's population has the wrong size")
+        generation = state["generation"]
+        scored_on = state["schedule"][generation - 1] if generation else None
+        if state["scored on"] != scored_on:
+            raise ValueError(f"the checkpoint's scores come from {state['scored on']}, not {scored_on}")
+        if generation and not all(state["fitness"]):
+            raise ValueError("a population after generation 0 must have its scores")
         population = [from_text(text) for text in state["population"]]
         if any(rule.method != method for rule in population):
             raise ValueError("the checkpoint holds rules of another method")
