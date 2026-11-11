@@ -25,6 +25,8 @@ needs_pilot = pytest.mark.skipif(not (PILOT / "GP-fixed_910" / "results").exists
 def test_the_dates_leave_out_days_without_evaluated_visitors():
     assert len(rt.dates_of({"year": 2019, "split": "test"})) == 181
     assert len(rt.dates_of({"year": 2019, "split": "validation"})) == 35
+    if not (rt.PROCESSED / "visitors_2022.csv.gz").exists():
+        pytest.skip("the 2022 tables are not here (they are not redistributed)")
     all_2022 = rt.dates_of({"year": 2022, "split": "all"})  # dates only, from the visitor table
     assert len(all_2022) == 362 and "2022-03-07" not in all_2022
 
