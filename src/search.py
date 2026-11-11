@@ -36,8 +36,9 @@ import pandas as pd
 from deap import gp, tools
 
 from day import PROCESSED
-from evaluate import Days, evaluate
-from gp_rule import H2_SET, HIGH, LOW, MAX_HEIGHT, METHODS, constants, from_text, new_individual, size, to_text, tree_sets
+from evaluate import Days, evaluate, grouped, hourly_peaks, visitor_rows
+from gp_rule import (H2_SET, HIGH, LOW, MAX_HEIGHT, METHODS, constants, from_text, identity, new_individual, size,
+                     to_text, tree_sets)
 from single_gphh import fingerprint, grow
 
 SCHEDULE = 3  # named random stream for the environment schedule (STAYS is 1, COMPLIANCE 2)
@@ -394,3 +395,141 @@ class Run:
         while self.generation < until:
             self.step()
         return self.population
+
+
+# ---------------------------------------------------------------------- #
+# The end of a run (4d, section 5)
+# ---------------------------------------------------------------------- #
+
+# Provisional normalisation, (low, high) of mean R_v and of G_hat; the pilot (F1) sets it from training and
+# validation results only, and F2 freezes it in the settings file. It is never changed after a test result.
+RANGE = {"R": (0.0, 1.5), "G": (0.0, 1.0)}
+
+
+def validation_dates():
+    days = pd.read_csv(PROCESSED / "days_2019.csv")
+    return sorted(days["date"][days["split"] == "validation"])
+
+
+def non_dominated(means):
+    """Indices of the points not dominated on the raw objectives: mean R_v up, G_hat down.
+    Two equal points do not dominate each other."""
+    keep = []
+    for i, (r, g) in enumerate(means):
+        dominated = any(r2 >= r and g2 <= g and (r2 > r or g2 < g) for r2, g2 in means)
+        if not dominated:
+            keep.append(i)
+    return keep
+
+
+def normalise(means, value_range=RANGE):
+    """(f1, f2), both maximised, not clipped: a point better than the range has f > 1."""
+    (r_lo, r_hi), (g_lo, g_hi) = value_range["R"], value_range["G"]
+    if not all(math.isfinite(v) for v in (r_lo, r_hi, g_lo, g_hi)) or r_hi <= r_lo or g_hi <= g_lo:
+        raise ValueError(f"a bad normalisation range: {value_range}")
+    out = []
+    for r, g in means:
+        if not (math.isfinite(r) and math.isfinite(g)):
+            raise ValueError(f"a non-finite objective ({r}, {g})")
+        out.append(((r - r_lo) / (r_hi - r_lo), (g_hi - g) / (g_hi - g_lo)))
+    return out
+
+
+def hypervolume(points):
+    """Area dominated by points (f1, f2), both maximised, above the reference point (0, 0); a point not
+    strictly better than the reference in both objectives adds nothing. Returns the area and the number
+    of such points."""
+    inside = sorted(((f1, f2) for f1, f2 in points if f1 > 0 and f2 > 0), key=lambda p: (-p[0], -p[1]))
+    area, height = 0.0, 0.0
+    for f1, f2 in inside:  # by f1 falling: each point adds the strip above the ones before it
+        if f2 > height:
+            area += f1 * (f2 - height)
+            height = f2
+    return area, len(points) - len(inside)
+
+
+def knee(points, sizes, texts):
+    """Index of the knee rule (section 5, item 5). points are the normalised front, sizes the rules'
+    node counts, texts their texts; ties go to the smaller rule, then the first text."""
+    order = lambda i: (sizes[i], texts[i])  # noqa: E731
+    by_point = {}
+    for i, p in enumerate(points):  # merge equal points: keep the smallest rule
+        if p not in by_point or order(i) < order(by_point[p]):
+            by_point[p] = i
+    candidates = list(by_point.values())
+    if len(candidates) == 1:
+        return candidates[0]
+    a = max(candidates, key=lambda i: points[i][0])  # best f1
+    b = max(candidates, key=lambda i: points[i][1])  # best f2
+    (a1, a2), (b1, b2) = points[a], points[b]
+    ideal = (a1, b2)
+    cross = lambda p: (b1 - a1) * (p[1] - a2) - (b2 - a2) * (p[0] - a1)  # noqa: E731
+    side = 1 if cross(ideal) > 0 else -1
+    length = math.hypot(b1 - a1, b2 - a2)
+    beyond = [i for i in candidates if side * cross(points[i]) > 0]
+    if len(candidates) == 2 or not beyond:
+        return min(candidates, key=lambda i: (math.dist(points[i], ideal), *order(i)))
+    return min(beyond, key=lambda i: (-side * cross(points[i]) / length, *order(i)))
+
+
+def finish(run, folder=None, value_range=RANGE):
+    """Section 5: the final population re-evaluated on all validation days with replicates 0..K-1; the
+    front of the validation means; its hypervolume and knee; and the outputs for RQ2 and RQ3. The front
+    rules are run again on the same days and replicates to make their outputs (the same results, as an
+    evaluation is deterministic); the knee rule's run keeps the decision log. Test days are not read."""
+    if run.generation != run.settings["generations"]:
+        raise ValueError("the run has not finished its generations")
+    k = run.settings["validation replicates"]
+    dates, days = validation_dates(), Days()
+    population = run.population
+    means = []
+    for rule in population:
+        results = [evaluate(rule, date, r, days) for date in dates for r in range(k)]
+        means.append((float(np.mean([x.mean_r for x in results])), float(np.mean([x.g_hat for x in results]))))
+    front = non_dominated(means)
+    points = normalise([means[i] for i in front], value_range)
+    area, outside = hypervolume(points)
+    texts = [to_text(population[i]) for i in front]
+    sizes = [sum(n for n, _ in size(population[i])) for i in front]
+    knee_rule = front[knee(points, sizes, texts)]
+
+    identity_columns = {"method": run.method, "run": run.run_number}
+    front_rows, groups, peaks, visitors, decisions, hourly = [], [], [], [], [], []
+    for i, point in zip(front, points):
+        rule, rule_id, is_knee = population[i], identity(population[i]), i == knee_rule
+        front_rows.append({**identity_columns, "rule": rule_id, "text": to_text(rule), "mean R_v": means[i][0],
+                           "G_hat": means[i][1], "f1": point[0], "f2": point[1],
+                           "nodes": sum(n for n, _ in size(rule)), "knee": is_knee})
+        for date in dates:
+            day = days.get(date)[0]
+            for r in range(k):
+                result = evaluate(rule, date, r, days, log=is_knee)
+                tag = {**identity_columns, "rule": rule_id, "date": date, "replicate": r}
+                rows = visitor_rows(day, result)
+                groups.append(grouped(rows).assign(**tag))
+                peaks.append(hourly_peaks(day, result.crowding).assign(**tag))
+                if is_knee:
+                    visitors.append(rows.assign(**tag))
+                    decisions.append(pd.DataFrame(result.run.decisions).assign(**tag))
+                    table = pd.DataFrame(result.crowding, columns=[f"hour {h}" for h in range(24)])
+                    hourly.append(table.assign(site=day.site_ids, **tag))
+    summary = {**identity_columns, "settings hash": settings_hash(run.settings), "data version": data_version(),
+               "code version": code_version(), "validation days": len(dates), "replicates": k,
+               "range": value_range, "hypervolume": area, "front size": len(front),
+               "front points not better than the reference": outside,
+               "knee rule": identity(population[knee_rule])}
+    out = {"summary": summary, "means": means, "front": pd.DataFrame(front_rows),
+           "groups": pd.concat(groups, ignore_index=True), "peaks": pd.concat(peaks, ignore_index=True),
+           "knee visitors": pd.concat(visitors, ignore_index=True),
+           "knee decisions": pd.concat(decisions, ignore_index=True),
+           "knee hourly": pd.concat(hourly, ignore_index=True)}
+    if folder is not None:
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "summary.json").write_text(json.dumps(summary, indent=1))
+        pd.DataFrame({"text": [to_text(r) for r in population], "mean R_v": [m[0] for m in means],
+                      "G_hat": [m[1] for m in means]}).assign(**identity_columns).to_csv(
+            folder / "final_population.csv", index=False)
+        for name in ("front", "groups", "peaks", "knee visitors", "knee decisions", "knee hourly"):
+            out[name].to_csv(folder / f"{name.replace(' ', '_')}.csv.gz", index=False)
+    return out

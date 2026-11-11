@@ -429,3 +429,83 @@ def test_scores_from_another_environment_are_refused(tmp_path):
     tamper(tmp_path, lambda s: s.update({"scored on": ("2019-01-01", 1000)}))
     with pytest.raises(ValueError):
         Run.resume("GP-fixed", 5, tmp_path, monitor=False)
+
+
+# ---------------------------------------------------------------------- #
+# 5. The end of a run (4d, section 5)
+# ---------------------------------------------------------------------- #
+
+from search import finish, hypervolume, knee, non_dominated, normalise, validation_dates  # noqa: E402
+
+
+def test_non_dominated_points_on_the_raw_objectives():
+    means = [(1.0, 0.5), (1.0, 0.5), (0.8, 0.4), (0.9, 0.6), (1.2, 0.7), (0.7, 0.45)]
+    assert non_dominated(means) == [0, 1, 2, 4]  # equal points are both kept; (0.9, 0.6) and (0.7, 0.45) lose
+
+
+def test_normalisation_is_not_clipped_and_refuses_bad_input():
+    out = normalise([(1.5, 0.0), (1.8, -0.1), (0.0, 1.0)], {"R": (0.0, 1.5), "G": (0.0, 1.0)})
+    assert out == [(1.0, 1.0), (1.2, 1.1), (0.0, 0.0)]
+    for bad_range in ({"R": (1.0, 1.0), "G": (0.0, 1.0)}, {"R": (0.0, 1.0), "G": (1.0, 0.0)},
+                      {"R": (0.0, float("inf")), "G": (0.0, 1.0)}):
+        with pytest.raises(ValueError):
+            normalise([(1.0, 0.5)], bad_range)
+    with pytest.raises(ValueError):
+        normalise([(float("nan"), 0.5)])
+
+
+def test_hypervolume_by_hand():
+    assert hypervolume([(0.5, 0.5)]) == (0.25, 0)
+    assert hypervolume([(1.0, 0.2), (0.4, 0.8)])[0] == pytest.approx(0.2 + 0.4 * 0.6)
+    assert hypervolume([(1.0, 0.2), (0.4, 0.8), (1.0, 0.2)])[0] == pytest.approx(0.44)  # a duplicate adds nothing
+    assert hypervolume([(1.0, 0.2), (0.4, 0.8), (0.3, 0.1)])[0] == pytest.approx(0.44)  # nor a dominated point
+    assert hypervolume([(-0.1, 0.9), (0.5, 0.0), (0.6, 0.5)]) == (0.3, 2)  # two not better than (0, 0)
+    assert hypervolume([]) == (0.0, 0)
+    assert hypervolume([(1.2, 1.1)])[0] == pytest.approx(1.32)  # beyond the range counts in full
+
+
+def test_knee_in_every_case():
+    same = lambda n: ([1] * n, [chr(97 + i) for i in range(n)])  # noqa: E731
+    assert knee([(0.4, 0.6)], *same(1)) == 0                                       # one point
+    assert knee([(1, 0), (0.8, 0.8), (0.5, 0.9), (0, 1)], *same(4)) == 1            # farthest on the ideal side
+    assert knee([(1, 0), (0.5, 0.5), (0, 1)], *same(3)) == 1                        # collinear: nearest the ideal
+    assert knee([(1, 0), (0.3, 0.3), (0, 1)], *same(3)) == 1                        # only the wrong side: nearest
+    assert knee([(1, 0), (0, 1)], [3, 1], ["a", "b"]) == 1                          # two points, a tie: smaller rule
+    assert knee([(1, 0), (0.8, 0.8), (0.8, 0.8), (0, 1)], [1, 5, 2, 1], list("abcd")) == 2  # duplicates: smaller
+    assert knee([(1, 0), (0.8, 0.6), (0.6, 0.8), (0, 1)], [1, 4, 4, 1], ["a", "z", "y", "b"]) == 2  # tie: text
+
+
+@needs_data
+def test_finishing_is_refused_before_the_last_generation():
+    run = Run("GP-fixed", 0, SMALL, monitor=False)
+    with pytest.raises(ValueError):
+        finish(run)
+
+
+@needs_data
+@pytest.mark.slow
+def test_the_end_of_a_run(tmp_path):
+    tiny = {**SMALL, "population": 4, "generations": 1, "validation replicates": 1}
+    run = Run("GP-adaptive", 3, tiny, monitor=False)
+    run.evolve()
+    out = finish(run, tmp_path)
+    means, front = out["means"], out["front"]
+    assert len(means) == 4 and len(front) == len(non_dominated(means)) and front["knee"].sum() == 1
+    assert sorted(zip(front["mean R_v"], front["G_hat"])) == sorted(means[i] for i in non_dominated(means))
+    dates = validation_dates()
+    for name in ("groups", "peaks", "knee visitors", "knee decisions", "knee hourly"):
+        table = out[name]
+        assert {"method", "run", "rule", "date", "replicate"} <= set(table.columns)
+        assert set(table["date"]) <= set(dates)
+    groups = out["groups"]
+    assert set(groups["date"]) == set(dates) and set(groups["rule"]) == set(front["rule"])
+    # Mean R_v rebuilt from the grouped outputs equals the front's validation mean.
+    for rule_id, g in groups.groupby("rule"):
+        per_day = g.groupby(["date", "replicate"])[["sum R_v", "visitors"]].sum()
+        rebuilt = (per_day["sum R_v"] / per_day["visitors"]).mean()
+        assert rebuilt == pytest.approx(front.loc[front["rule"] == rule_id, "mean R_v"].iloc[0], rel=1e-12)
+    knee_id = front.loc[front["knee"], "rule"].iloc[0]
+    assert set(out["knee decisions"]["rule"]) == {knee_id} and len(out["knee decisions"]) > 0
+    assert len(out["knee hourly"]) == 35 * 15
+    for name in ("summary.json", "front.csv.gz", "groups.csv.gz", "knee_decisions.csv.gz"):
+        assert (tmp_path / name).exists()

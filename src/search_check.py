@@ -10,6 +10,9 @@ Checks of the GP rules and their evaluation on real days (Step 4, stage D)
   2. GP-adaptive with a constant h2 against GP-fixed with that c, on the
      pilot days: the same objectives and visitor scores.
   3. Grouped RQ3 outputs against the per-visitor rows, on the pilot days.
+  5. The end of the GP-adaptive short run (Step 4d): validation, front,
+     hypervolume, knee and outputs; its time and the size of its files,
+     scaled up to a formal run.
   4. A short search of every method with the same run number (Step 4c):
      the same schedule, training days only, what the operators changed,
      and the time per generation. Too short to say anything about results.
@@ -202,10 +205,11 @@ def short_searches():
     say("|---|---|---|---|---|---|---|---|---|---|---|")
     table = pd.read_csv(PROCESSED / "days_2019.csv")
     train = set(table["date"][table["split"] == "train"])
-    schedules = []
+    schedules, runs = [], {}
     for method in METHODS:
         run = Run(method, 1, settings)
         run.evolve()
+        runs[method] = run
         dates = [row["date"] for row in run.log]
         schedules.append(dates)
         assert set(dates) <= train and len(set(dates)) == len(dates)
@@ -222,6 +226,46 @@ def short_searches():
     say()
     say("- Every method read the same dates in the same order, all training days, none twice (assertions).")
     say()
+    return runs
+
+
+# ---------------------------------------------------------------------- #
+# 5. The end of a run
+# ---------------------------------------------------------------------- #
+
+def end_of_run(run):
+    import tempfile
+    from search import finish, non_dominated
+    say("## 5. The end of the GP-adaptive short run")
+    say()
+    with tempfile.TemporaryDirectory() as folder:
+        started = time.time()
+        out = finish(run, folder)
+        seconds = time.time() - started
+        sizes = {p.name: p.stat().st_size for p in Path(folder).iterdir()}
+    n, k, f = len(run.population), run.settings["validation replicates"], len(out["front"])
+    evaluations = 35 * k * (n + f)
+    assert len(out["front"]) == len(non_dominated(out["means"])) and out["front"]["knee"].sum() == 1
+    s = out["summary"]
+    say(f"Population {n}, validation replicates K = {k}, 35 validation days: {evaluations:,} evaluations "
+        f"(the population, then the {f} front rules again for their outputs) in {seconds:.0f} s, "
+        f"{seconds / evaluations:.3f} s each. Hypervolume {s['hypervolume']:.3f} with the provisional range "
+        f"{s['range']}; {s['front points not better than the reference']} front points not better than the reference.")
+    say()
+    say("| File | Bytes | Per front rule and validation evaluation |")
+    say("|---|---|---|")
+    per_rule = ("groups.csv.gz", "peaks.csv.gz")
+    for name, size in sorted(sizes.items()):
+        share = f"{size / (f * 35 * k):,.0f}" if name in per_rule else ""
+        say(f"| {name} | {size:,} | {share} |")
+    say()
+    grows = sum(sizes[name] for name in per_rule) / (f * 35 * k)
+    fixed = sum(size for name, size in sizes.items() if name not in per_rule)
+    say(f"Scaled to a formal run (N = {N}, K = {K}, F = {F}): the end of a run is {35 * K * (N + F):,} evaluations; "
+        f"the outputs that grow with the front are about {grows * F * 35 * K / 1e6:.1f} MB a run and "
+        f"{grows * F * 35 * K * 90 / 1e9:.2f} GB for 90 runs, plus the knee files (here {fixed / 1e6:.1f} MB, "
+        f"growing with K). Step 6 adds the same outputs on 181 test days.")
+    say()
 
 
 def main():
@@ -236,7 +280,8 @@ def main():
     timing()
     adaptive_is_fixed()
     grouped_outputs()
-    short_searches()
+    runs = short_searches()
+    end_of_run(runs["GP-adaptive"])
     (OUT / "record.md").write_text("\n".join(lines) + "\n")
 
 

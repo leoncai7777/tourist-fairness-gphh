@@ -134,20 +134,20 @@ def histogram_bin(r):
 def grouped(rows):
     """Scores by the RQ3 groups fixed in advance, split by follows."""
     low, high = budget_cuts()
-    g = pd.DataFrame({
-        "follows": rows["follows"],
-        "arrival group": np.searchsorted(ARRIVAL_EDGES, rows["arrival"], side="right"),
-        "budget group": np.searchsorted([low, high], rows["budget"], side="right"),
-        "stop group": np.minimum(rows["observed stops"], STOP_GROUPS[-1])})
-    g["visitors"] = 1
+    g = {"follows": rows["follows"].to_numpy(),
+         "arrival group": np.searchsorted(ARRIVAL_EDGES, rows["arrival"], side="right"),
+         "budget group": np.searchsorted([low, high], rows["budget"], side="right"),
+         "stop group": np.minimum(rows["observed stops"].to_numpy(), STOP_GROUPS[-1]),
+         "visitors": np.ones(len(rows), int)}
     for column in ("R_v", "change A", "change C", "change T", "stops", "observed stops", "overruns"):
-        g[column] = rows[column]
-    g["ended early"] = (rows["stops"] < rows["observed stops"]).astype(int)
+        g[column] = rows[column].to_numpy()
+    g["ended early"] = (rows["stops"] < rows["observed stops"]).to_numpy().astype(int)
     for reason in END_REASONS:
-        g[f"end: {reason}"] = (rows["end reason"] == reason).astype(int)
+        g[f"end: {reason}"] = (rows["end reason"] == reason).to_numpy().astype(int)
     bins = histogram_bin(rows["R_v"]) - (LOWEST_BIN - 1)
     for b in range(HIGHEST_BIN - LOWEST_BIN + 2):
         g[f"bin {b + LOWEST_BIN - 1}"] = (bins == b).astype(int)
+    g = pd.DataFrame(g)  # all columns at once
     keys = ["follows", "arrival group", "budget group", "stop group"]
     return g.groupby(keys).sum().reset_index().rename(columns={"R_v": "sum R_v", "overruns": "overrun records"})
 
