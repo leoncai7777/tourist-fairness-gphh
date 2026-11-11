@@ -655,12 +655,17 @@ def test_the_definitions_reach_every_evaluation(monkeypatch):
 @needs_data
 def test_the_settings_file_must_match_the_data(tmp_path):
     from evaluate import budget_cuts
-    good = {"settings": SMALL, "budget cuts": list(budget_cuts())}
+    full = complete(SMALL)  # every setting and definition written out, as the frozen file must
+    good = {"settings": full, "budget cuts": list(budget_cuts())}
     (tmp_path / "good.json").write_text(json_module.dumps(good))
-    assert load_settings(tmp_path / "good.json") == complete(SMALL)
-    (tmp_path / "bad.json").write_text(json_module.dumps({**good, "budget cuts": [1.0, 2.0]}))
-    with pytest.raises(ValueError):
-        load_settings(tmp_path / "bad.json")
+    assert load_settings(tmp_path / "good.json") == full
+    missing = {k: v for k, v in full.items() if k != "stop limit"}
+    for name, data in (("cuts", {**good, "budget cuts": [1.0, 2.0]}),
+                       ("missing", {**good, "settings": missing}),           # would quietly take the default
+                       ("unknown", {**good, "settings": {**full, "stop limt": False}})):  # a misspelt key
+        (tmp_path / f"{name}.json").write_text(json_module.dumps(data))
+        with pytest.raises(ValueError):
+            load_settings(tmp_path / f"{name}.json")
 
 
 def test_runs_under_other_settings_are_never_pooled(tmp_path):

@@ -63,10 +63,16 @@ def complete(settings):
 
 
 def load_settings(path="configs/search.json"):
-    """The frozen settings of the formal runs, from their file. The budget cut points written there must be
-    the ones the data gives, so that the RQ3 groups are the ones the file says."""
+    """The frozen settings of the formal runs, from their file. Unlike runs made in code, nothing is filled
+    in: the file must name every setting and every definition, and nothing else, so that what was run is
+    read from the file alone. The budget cut points written there must be the ones the data gives, so that
+    the RQ3 groups are the ones the file says."""
     from evaluate import budget_cuts
     data = json.loads(Path(path).read_text())
+    required = set(SETTINGS) | set(DEFINITIONS)
+    missing, unknown = required - set(data["settings"]), set(data["settings"]) - required
+    if missing or unknown:
+        raise ValueError(f"{path}: missing {sorted(missing)}, unknown {sorted(unknown)}")
     settings = complete(data["settings"])
     check_settings(settings)
     if tuple(data["budget cuts"]) != budget_cuts():
