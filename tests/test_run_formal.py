@@ -286,3 +286,75 @@ def test_stopping_the_launcher_stops_its_workers(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         module.run_all([("job", i) for i in range(5)], 3, start=start)
     assert len(started) == 3 and all(p.terminated for p in started)  # no worker left running
+
+
+# ---------------------------------------------------------------------- #
+# 5. Data contents, attempts and the start script (first review of the readiness package)
+# ---------------------------------------------------------------------- #
+
+@needs_data
+def test_the_identity_names_the_contents_of_the_tables(tmp_path, monkeypatch):
+    import day
+    module = launcher()
+    copy = tmp_path / "processed"
+    shutil.copytree(day.PROCESSED, copy)
+    walk = tmp_path / "walk.csv"
+    shutil.copy(day.WALKING, walk)
+    monkeypatch.setattr(day, "PROCESSED", copy)
+    monkeypatch.setattr(day, "WALKING", walk)
+    before = module.data_content()
+    assert before == module.data_content()
+    sites = copy / "sites.csv"
+    sites.write_text(sites.read_text().replace("Arena", "Arena ", 1))  # one table changed, manifest unchanged
+    assert module.data_content() != before
+
+
+START = ROOT / "tools" / "start_formal.sh"
+
+
+def start_script(args, log, **kwargs):
+    import os
+    return subprocess.Popen(["zsh", str(START), *args], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, env={**os.environ, "FORMAL_LOG": str(log)}, **kwargs)
+
+
+def test_the_start_script_fails_when_the_launcher_fails(tmp_path):
+    for args in (["--workers", "0"], ["--settings", str(tmp_path / "missing.json")]):
+        process = start_script(args, tmp_path / "launch.log")
+        process.communicate()
+        assert process.returncode != 0  # not the log's success
+    assert (tmp_path / "launch.log").exists()
+
+
+@needs_data
+@pytest.mark.slow
+def test_the_start_script_succeeds_stops_on_ctrl_c_and_resumes(tmp_path):
+    import os
+    import signal
+    import time as clock
+    settings = settings_file(tmp_path / "search.json")
+    args = ["--settings", str(settings), "--out-root", str(tmp_path / "formal"), "--runs", "0-1",
+            "--methods", "GP-fixed", "GP-adaptive", "--workers", "3"]
+    # Ctrl-C in a terminal reaches the whole foreground process group: the start script, caffeinate,
+    # the launcher, its workers and tee alike.
+    process = start_script(args, tmp_path / "launch.log", start_new_session=True)
+    deadline = clock.time() + 60
+    workers = lambda: subprocess.run(["pgrep", "-g", str(process.pid), "-f", "run_formal.py --part"],  # noqa: E731
+                                     capture_output=True, text=True).stdout.split()
+    while clock.time() < deadline and len(workers()) < 3:
+        clock.sleep(0.5)
+    assert len(workers()) == 3  # interrupted while all three run
+    os.killpg(process.pid, signal.SIGINT)
+    process.communicate(timeout=120)
+    assert process.returncode != 0
+    left = subprocess.run(["pgrep", "-f", str(tmp_path / "formal")], capture_output=True, text=True).stdout
+    assert left.strip() == ""  # no worker of this batch is still running
+    assert not list((tmp_path / "formal").glob("*/launcher.lock"))
+    # The same command resumes and completes the batch.
+    process = start_script(args, tmp_path / "launch.log")
+    out, _ = process.communicate(timeout=600)
+    assert process.returncode == 0, out[-500:]
+    assert "4 of 4 runs complete and pooled" in out
+    run = next((tmp_path / "formal").glob("*/GP-fixed_00"))
+    attempts = [json.loads(line) for line in (run / "attempts.jsonl").read_text().splitlines()]
+    assert attempts and attempts[-1]["search seconds"] >= 0

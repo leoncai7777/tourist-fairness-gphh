@@ -99,9 +99,23 @@ def tools_version():
     return {"tools version": digest.hexdigest()[:10], "commit": commit.stdout.strip() or "unknown"}
 
 
+def data_content():
+    """Hash of the contents of every input table a run reads (all of data/verona/processed and the walking
+    table). The data version in manifest.json names the code and raw inputs that made the tables; this
+    names the tables themselves, so a table changed or rebuilt after the start is seen."""
+    from day import PROCESSED, WALKING
+    digest = hashlib.sha256()
+    for path in sorted(PROCESSED.iterdir()) + [WALKING]:
+        if path.is_file():
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
 def expected_identity(settings):
     from search import code_version, data_version, settings_hash
-    return {"settings hash": settings_hash(settings), "code version": code_version(), "data version": data_version()}
+    return {"settings hash": settings_hash(settings), "code version": code_version(), "data version": data_version(),
+            "data content": data_content()}
 
 
 # ---------------------------------------------------------------------- #
@@ -139,9 +153,10 @@ def done(folder, identity):
 
 
 def check_summary(results, identity):
-    """The summary written by the run itself must carry the same identity as its marker."""
+    """The summary written by the run itself must carry the same identity as its marker, on every field it
+    records (the data content is the launcher's own check, kept in the marker, not in the summary)."""
     summary = json.loads((results / "summary.json").read_text())
-    wrong = {k: summary.get(k) for k in identity if summary.get(k) != identity[k]}
+    wrong = {k: summary.get(k) for k in identity if k != "data content" and summary.get(k) != identity[k]}
     if wrong:
         raise SystemExit(f"{results} has a summary of another identity: {wrong}")
     return summary
@@ -175,13 +190,20 @@ def worker(settings_path, out, method, run):
             raise SystemExit(f"{checkpoint} holds a run under other settings than {settings_path}")
     else:
         job = Run(method, run, settings, folder=checkpoint)
+    first_generation = job.generation
     job.evolve()
     searched = time.time()
     finish(job, folder / "results")
     log = job.log
-    report = {"method": method, "run": run, **identity, "search seconds": searched - started,
-              "end seconds": time.time() - searched,
-              "peak memory MB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2 ** 20,
+    # One line per attempt: a resumed attempt only times its own part, so the attempts are kept, not overwritten.
+    attempt = {"started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)),
+               "first generation": first_generation, "resumed": first_generation > 0,
+               "search seconds": searched - started, "end seconds": time.time() - searched,
+               "peak memory MB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2 ** 20}
+    with open(folder / "attempts.jsonl", "a") as f:
+        f.write(json.dumps(attempt) + "\n")
+    attempts = [json.loads(line) for line in (folder / "attempts.jsonl").read_text().splitlines()]
+    report = {"method": method, "run": run, **identity, "attempts": attempts,
               "evaluations": sum(g["evaluations"] for g in log if "evaluations" in g),
               "evaluations run": sum(g["evaluations run"] for g in log if "evaluations run" in g)}
     (folder / "run.json").write_text(json.dumps(report, indent=1))
