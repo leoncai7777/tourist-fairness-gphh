@@ -34,7 +34,9 @@ Run from the repository root.
 
 import argparse
 import gzip
+import hashlib
 import json
+import os
 import resource
 import subprocess
 import sys
@@ -58,6 +60,42 @@ def tasks(runs, methods):
 
 def folder_of(out, method, run):
     return out / f"{method}_{run:02d}"
+
+
+def check_arguments(runs, methods, workers):
+    """Refuse a command that would start nothing, start two processes on one run, or never advance."""
+    if workers < 1:
+        raise SystemExit(f"--workers must be at least 1, not {workers}")
+    unknown = [m for m in methods if m not in METHODS + ["GP-single"]]
+    if unknown:
+        raise SystemExit(f"unknown methods {unknown}")
+    if len(set(methods)) != len(methods):
+        raise SystemExit(f"a method is named twice: {methods}")
+    first, sep, last = runs.partition("-")
+    if not (sep and first.isdigit() and last.isdigit() and int(first) <= int(last) < 900):
+        raise SystemExit(f"--runs must be first-last with first <= last < 900 (900 on are pilot runs), not {runs!r}")
+    return int(first), int(last)
+
+
+def lock(out):
+    """One launcher per results folder: a second one stops at once instead of writing the same runs."""
+    path = out / "launcher.lock"
+    try:
+        handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise SystemExit(f"{path} exists: another launcher is using {out}; if none is running, delete the file")
+    os.write(handle, str(os.getpid()).encode())
+    os.close(handle)
+    return path
+
+
+def tools_version():
+    """Hash of the launcher and the other tools, and the git commit the batch was started from."""
+    digest = hashlib.sha1()
+    for path in sorted((ROOT / "tools").glob("*.py")):
+        digest.update(path.read_bytes())
+    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True)
+    return {"tools version": digest.hexdigest()[:10], "commit": commit.stdout.strip() or "unknown"}
 
 
 def expected_identity(settings):
@@ -197,7 +235,7 @@ def pool(out, todo_tasks, identity):
     tuned_summary = None
     if done(tuned_folder, {**identity, "rule": "tuned weighted"}):
         tuned_summary = check_summary(tuned_folder, identity)
-    index = {"identity": identity,
+    index = {"identity": identity, "tools": tools_version(),
              "runs": [{"method": s["method"], "run": s["run"], "hypervolume": s["hypervolume"],
                        "front members": s["front members"], "front rules": s["front rules"],
                        "knee rule": s["knee rule"]} for s in summaries],
@@ -226,17 +264,29 @@ def main():
         return
 
     from search import load_settings
+    first, last = check_arguments(args.runs, args.methods, args.workers)
     settings = load_settings(args.settings)  # refuses an incomplete or inconsistent file before anything runs
     identity = expected_identity(settings)
     out = Path(args.out_root) / identity["settings hash"]
     out.mkdir(parents=True, exist_ok=True)
+    held = lock(out)
+    try:
+        batch_main(args, settings, identity, out, first, last)
+    finally:
+        held.unlink()
+
+
+def batch_main(args, settings, identity, out, first, last):
     task_file = out / "task.json"
     if task_file.exists() and json.loads(task_file.read_text()) != identity:
         raise SystemExit(f"{out} was started under another code or data version: {task_file.read_text()}")
     task_file.write_text(json.dumps(identity, indent=1))
     (out / "settings.json").write_text(json.dumps(settings, indent=1))
+    started = {**tools_version(), "runs": f"{first}-{last}", "methods": args.methods, "workers": args.workers,
+               "time": time.strftime("%Y-%m-%d %H:%M:%S")}
+    with open(out / "launches.jsonl", "a") as f:  # one line per launch: which tools and commit ran this batch
+        f.write(json.dumps(started) + "\n")
 
-    first, last = (int(x) for x in args.runs.split("-"))
     batch = tasks(range(first, last + 1), args.methods)
     # Every complete result is checked before anything runs: one of another identity stops the batch here.
     todo = [(m, r) for m, r in batch if not done(folder_of(out, m, r), {**identity, "method": m, "run": r})]

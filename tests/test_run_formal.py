@@ -161,6 +161,8 @@ def test_a_batch_restarts_skips_finishes_and_refuses(tmp_path):
     out = tmp_path / "formal" / settings_hash(load_settings(settings))
     index = json.loads((out / "index.json").read_text())
     assert len(index["runs"]) == 2 and index["tuned weighted"]["settings hash"] == out.name
+    assert index["tools"]["tools version"] and (out / "launches.jsonl").exists()
+    assert not (out / "launcher.lock").exists()  # released when the batch ends
 
     # Everything complete: nothing runs again.
     again = batch(settings, tmp_path / "formal")
@@ -219,3 +221,34 @@ def test_a_worker_refuses_a_folder_of_other_settings(tmp_path):
     (folder / "task.json").write_text(json.dumps(IDENTITY))
     with pytest.raises(SystemExit, match="not those of"):
         module.worker(settings, folder, "GP-fixed", 0)
+
+
+# ---------------------------------------------------------------------- #
+# 4. Arguments, the folder lock and the tools version (after the release review)
+# ---------------------------------------------------------------------- #
+
+def test_bad_arguments_are_refused_before_anything_starts():
+    module = launcher()
+    assert module.check_arguments("0-29", ["GP-fixed", "GP-prop", "GP-adaptive"], 12) == (0, 29)
+    for runs, methods, workers in (("0-29", ["GP-fixed"], 0),                 # nothing would ever start
+                                   ("0-29", ["GP-fixed", "GP-fixed"], 4),     # two processes on one run
+                                   ("0-29", ["GP-other"], 4),
+                                   ("29-0", ["GP-fixed"], 4),                 # an empty batch
+                                   ("0-900", ["GP-fixed"], 4),                # pilot run numbers
+                                   ("0", ["GP-fixed"], 4), ("a-b", ["GP-fixed"], 4)):
+        with pytest.raises(SystemExit):
+            module.check_arguments(runs, methods, workers)
+
+
+def test_a_second_launcher_on_the_same_folder_stops(tmp_path):
+    module = launcher()
+    held = module.lock(tmp_path)
+    with pytest.raises(SystemExit, match="another launcher"):
+        module.lock(tmp_path)
+    held.unlink()
+    module.lock(tmp_path).unlink()  # free again once the first one is done
+
+
+def test_the_tools_version_names_the_commit():
+    version = launcher().tools_version()
+    assert len(version["tools version"]) == 10 and version["commit"] not in ("", None)
