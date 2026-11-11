@@ -15,6 +15,10 @@ The rule set and the knees taken to the test days are those Step 5 saved; this
 check never replaces them. It reports only counts and the largest differences,
 never the values.
 
+Only when every run and the tuned rule pass does it write the rule list of the
+test evaluation (run_test.write_rule_list), once; the test evaluation reads
+only that list.
+
 Run, from the frozen Step 6 snapshot:  python3 analysis/reproduce.py [--workers 12]
 """
 
@@ -130,6 +134,9 @@ def main():
           f"(tuned {tuned['largest mean difference']:.1e}); failed: {failed or 'none'}")
     if failed or not tuned_ok or not math.isfinite(largest):
         raise SystemExit(1)
+    from run_test import RULE_LIST, rule_list_hash, write_rule_list
+    table = write_rule_list()
+    print(f"rule list written: {RULE_LIST} ({len(table)} rules, hash {rule_list_hash()})")
 
 
 if __name__ == "__main__":

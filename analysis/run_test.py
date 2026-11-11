@@ -34,6 +34,7 @@ import hashlib
 import json
 import math
 import os
+import resource
 import shutil
 import signal
 import sys
@@ -236,7 +237,8 @@ def run_block(job):
     shutil.rmtree(folder, ignore_errors=True)
     temporary.rename(folder)
     done = {**identity, "rules": list(rules["rule id"]), "dates": dates, "replicates": replicates,
-            "seconds": round(time.time() - started, 1)}
+            "seconds": round(time.time() - started, 1),
+            "worker peak memory MB": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2 ** 20)}
     write_atomic(folder / "done.json", done)
     return folder.name
 
