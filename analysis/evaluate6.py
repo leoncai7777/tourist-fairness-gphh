@@ -10,8 +10,9 @@ relative_value() from the parts of the new route and of the replay baseline of
 the same date, so that at alpha = 0.25 it is the same computation as the
 search's. That is checked in every evaluation, exactly: every visitor's R_v,
 the mean (taken with the frozen scoring.summary, the same Series.mean() as
-evaluate()) and the grouped table (made by the frozen grouped()). A difference
-stops the run.
+evaluate()); the grouped table at 0.25 is the frozen grouped() of those rows. A
+difference stops the run. At the other alphas the mean is the same
+Series.mean(), without the rest of summary(), which only the main alpha needs.
 
 Saved for every rule, day and replicate: the mean R_v at each alpha and G_hat;
 the grouped table at alpha = 0.25, with, for each other alpha, the sum of R_v
@@ -48,13 +49,11 @@ def label(alpha):
     return f"{alpha:g}"
 
 
-def rescored(v, b, alpha, beta):
-    """The visitors' table v of an evaluation, scored at another alpha against the replay baseline b."""
-    out = v.copy()
-    out["V"] = route_value(v["A"], v["C"], v["T"], alpha, beta)
-    out["V observed"] = route_value(b["A"], b["C"], b["T"], alpha, beta)
-    out["R_v"] = relative_value(out["V"], out["V observed"], b["A"])
-    return out
+def r_at(new, observed, alpha, beta):
+    """Each visitor's R_v at alpha, from the parts (A, C, T) of the new route and of the replay baseline, as
+    arrays, by the frozen route_value() and relative_value(): element by element the same arithmetic as
+    score_day(), which applies them to pandas columns."""
+    return relative_value(route_value(*new, alpha, beta), route_value(*observed, alpha, beta), observed[0])
 
 
 def at_least(r, theta):
@@ -82,27 +81,31 @@ def score(rule, date, replicate, days, beta=0.5, stop_limit=True, knee=False, wa
     rows = visitor_rows(day, result)
     main = grouped(rows)
 
-    means, groups_extra, r_by_alpha = {}, [], {}
-    for alpha in ALPHAS:
-        va = rescored(v, b, alpha, beta)
-        r_by_alpha[alpha] = va["R_v"].to_numpy()
-        means[alpha] = float(summary(va, alpha, beta)["all"]["mean R_v"])
-        if alpha == MAIN_ALPHA:
-            if not np.array_equal(va["R_v"].to_numpy(), v["R_v"].to_numpy()):
-                raise AssertionError(f"{date} r{replicate}: R_v at alpha {alpha} differs from evaluate()")
-            if means[alpha] != result.mean_r:
-                raise AssertionError(f"{date} r{replicate}: mean R_v at alpha {alpha} differs from evaluate()")
-            if not grouped(rows.assign(R_v=va["R_v"].to_numpy())).equals(main):
-                raise AssertionError(f"{date} r{replicate}: grouped table at alpha {alpha} differs")
-            continue
-        extra = rows[[]].assign(**{"sum R_v": va["R_v"].to_numpy()},
-                                **{f"R_v >= {t:g}": at_least(va["R_v"], t).astype(int) for t in THETAS})
-        keys = main_keys(rows)
-        extra = pd.concat([keys, extra], axis=1).groupby(GROUP_KEYS).sum().reset_index()
-        if not np.array_equal(extra[GROUP_KEYS].to_numpy(int), main[GROUP_KEYS].to_numpy(int)):
-            raise AssertionError(f"{date} r{replicate}: the groups at alpha {alpha} are not those of grouped()")
-        groups_extra.append(extra.drop(columns=GROUP_KEYS).rename(columns=lambda c: f"{c} (alpha {label(alpha)})"))
-    groups = pd.concat([main] + groups_extra, axis=1)
+    new = tuple(v[c].to_numpy() for c in ("A", "C", "T"))
+    old = tuple(b[c].to_numpy() for c in ("A", "C", "T"))
+    r_by_alpha = {alpha: r_at(new, old, alpha, beta) for alpha in ALPHAS}
+
+    # the main alpha: the same numbers as evaluate(), and the frozen summary() gives evaluate()'s mean;
+    # the main table is grouped() of rows holding exactly these R_v
+    r = r_by_alpha[MAIN_ALPHA]
+    if not np.array_equal(r, v["R_v"].to_numpy()):
+        raise AssertionError(f"{date} r{replicate}: R_v at alpha {MAIN_ALPHA} differs from evaluate()")
+    means = {MAIN_ALPHA: float(summary(v.assign(R_v=r), MAIN_ALPHA, beta)["all"]["mean R_v"])}
+    if means[MAIN_ALPHA] != result.mean_r:
+        raise AssertionError(f"{date} r{replicate}: mean R_v at alpha {MAIN_ALPHA} differs from evaluate()")
+
+    # the other alphas: the mean by the same Series.mean(), and per group the sum of R_v and the threshold counts
+    others = [a for a in ALPHAS if a != MAIN_ALPHA]
+    columns = {}
+    for alpha in others:
+        means[alpha] = float(pd.Series(r_by_alpha[alpha]).mean())
+        columns[f"sum R_v (alpha {label(alpha)})"] = r_by_alpha[alpha]
+        for t in THETAS:
+            columns[f"R_v >= {t:g} (alpha {label(alpha)})"] = at_least(r_by_alpha[alpha], t).astype(int)
+    extra = main_keys(rows).assign(**columns).groupby(GROUP_KEYS).sum().reset_index()
+    if not np.array_equal(extra[GROUP_KEYS].to_numpy(int), main[GROUP_KEYS].to_numpy(int)):
+        raise AssertionError(f"{date} r{replicate}: the groups at the other alphas are not those of grouped()")
+    groups = pd.concat([main, extra.drop(columns=GROUP_KEYS)], axis=1)
 
     out = {"objectives": {**{f"mean R_v (alpha {label(a)})": means[a] for a in ALPHAS}, "G_hat": result.g_hat},
            "groups": groups, "peaks": hourly_peaks(day, result.crowding)}
