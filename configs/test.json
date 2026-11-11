@@ -1,0 +1,8 @@
+{
+  "comment": "Step 6 test evaluation (step6_plan.md, section 5). The definitions come from configs/search.json; this file adds only what Step 6 needs.",
+  "year": 2019,
+  "split": "test",
+  "replicates": 5,
+  "alphas": [0.0, 0.25, 0.5, 1.0],
+  "dates per block": 5
+}
