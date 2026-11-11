@@ -1,0 +1,29 @@
+{
+ "about": "Frozen settings of the formal runs (search_design.md, sections 6, 14, 15). The four provisional definitions (R_v with alpha and beta, the corrected budget, the stop limit, the inferred calendar) are at their provisional values; a change is a new file, a new settings hash and a re-run.",
+ "settings": {
+  "budget": "corrected",
+  "same day": false,
+  "peak floor": null,
+  "stop limit": true,
+  "alpha": 0.25,
+  "beta": 0.5,
+  "R range": [
+   0.5,
+   1.25
+  ],
+  "G range": [
+   0.1,
+   0.75
+  ],
+  "population": 200,
+  "generations": 100,
+  "crossover": 0.8,
+  "mutation": 0.15,
+  "monitor every": 10,
+  "validation replicates": 5
+ },
+ "budget cuts": [
+  250.0,
+  369.0
+ ]
+}

@@ -35,6 +35,10 @@ PHASES = {
     "full": {"methods": ["GP-fixed", "GP-prop", "GP-adaptive"], "runs": [910],
              "settings": {"population": 200, "generations": 100, "crossover": 0.8, "mutation": 0.15,
                           "monitor every": 10, "validation replicates": 5}},
+    # twelve runs at once, the number planned for the formal runs: how much slower is each one?
+    "parallel": {"methods": ["GP-fixed", "GP-prop", "GP-adaptive"], "runs": [920, 921, 922, 923],
+                 "settings": {"population": 40, "generations": 20, "crossover": 0.8, "mutation": 0.15,
+                              "monitor every": 5, "validation replicates": 1}},
     # the code with the settings wiring and the evaluation cache, end to end at full scale; run 910 again, so
     # that every generation can be compared with the same run of the full phase, made before the cache
     "current": {"methods": ["GP-adaptive"], "runs": [910],
@@ -80,6 +84,12 @@ def launch(phase):
     write_record(phase, time.time() - started)
 
 
+def per_run(report):
+    """Seconds per training simulation actually run (the cache skips copies); '-' before the cache."""
+    run = sum(g.get("evaluations run", 0) for g in report["generations"])
+    return f"{sum(g['seconds'] for g in report['generations']) / run:.3f}" if run else "-"
+
+
 def write_record(phase, wall):
     reports = [json.loads(p.read_text()) for p in sorted((OUT / phase).glob("*/pilot.json"))]
     s = PHASES[phase]["settings"]
@@ -88,12 +98,13 @@ def write_record(phase, wall):
              f"Training and validation days only; run numbers from 900. Not results of the study.", "",
              "## Each run", "",
              "| Method | Run | Search (min) | End of run (min) | Peak memory (MB) | Seconds per training evaluation "
-             "| Validation hypervolume | Front members | Front rules | Output (MB) |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             "| Seconds per simulation run | Validation hypervolume | Front members | Front rules | Output (MB) |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in reports:
         evaluations = 2 * s["population"] * s["generations"]
         lines.append(f"| {r['method']} | {r['run']} | {r['search seconds'] / 60:.1f} | {r['end seconds'] / 60:.1f} | "
                      f"{r['peak memory MB']:.0f} | {sum(g['seconds'] for g in r['generations']) / evaluations:.3f} | "
+                     f"{per_run(r)} | "
                      f"{r['summary']['hypervolume']:.3f} | {r['summary']['front members']} | "
                      f"{r['summary']['front rules']} | {sum(r['files'].values()) / 1e6:.1f} |")
     lines += ["", "Hypervolumes use the provisional range of search.py, only to watch the search; the pilot then "
