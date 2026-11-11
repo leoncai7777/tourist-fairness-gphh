@@ -228,3 +228,6 @@ data/toronto/
 
 # TOPTW benchmark instances: downloaded from the KU Leuven orienteering page, no stated licence, keep local only
 data/toptw/
+
+# Pilot runs of the search: checkpoints and per-run outputs stay local; only each phase's record.md is kept
+outputs/search/pilot/*/*/
