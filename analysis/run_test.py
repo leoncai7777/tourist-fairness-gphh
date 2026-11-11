@@ -46,8 +46,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from step5 import (FORMAL, GP_METHODS, ROOT, RUNS, SETTINGS_FILE, analysis_version, check_here,  # noqa: E402
-                   package_versions, run_folder)
+from step5 import (FORMAL, GP_METHODS, ROOT, RUNS, SETTINGS_FILE, analysis_version, check_complete,  # noqa: E402
+                   check_here, package_versions, run_folder)
 import evaluate6  # noqa: E402
 import forms  # noqa: E402
 
@@ -254,7 +254,11 @@ def write_atomic(path, data):
 # ---------------------------------------------------------------------- #
 
 def identity_of(settings_path, test_path, rules_path, check=True):
+    """With check on (always, for the formal batch): the code and tables must be Step 5's, and every
+    method and run and the tuned rule complete with the Step 5 identity, before anything runs."""
     here = check_here() if check else None
+    if check:
+        check_complete()
     return {"step 5": here, "step 6 settings hash": test_settings_hash(load_test_settings(test_path)),
             "analysis version": analysis_version(), "rule list hash": rule_list_hash(rules_path),
             "packages": package_versions(), "search settings": str(settings_path)}
