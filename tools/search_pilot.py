@@ -9,8 +9,11 @@ Pilot runs use run numbers from 900, so the seeds and schedules of the formal
 runs (0 to 29) are never used here. Pilot results are not results of the
 study: they only fix N, G, K and the normalisation range.
 
-  python3 src/search_pilot.py short   # every method, two short runs each, all at once
-  python3 src/search_pilot.py full    # GP-fixed, GP-prop, GP-adaptive at N = 200, G = 100, K = 5, at once
+  python3 tools/search_pilot.py short    # every method, two short runs each, all at once
+  python3 tools/search_pilot.py full     # GP-fixed, GP-prop, GP-adaptive at N = 200, G = 100, K = 5, at once
+  python3 tools/search_pilot.py current  # GP-adaptive, run 910 again, with the current code
+
+Kept in tools/, outside the code version: it only starts runs and reports on them.
 
 Each run is its own process (one level of parallelism); it writes its folder
 under outputs/search/pilot/<phase>/ and a pilot.json with wall time, peak
@@ -32,8 +35,9 @@ PHASES = {
     "full": {"methods": ["GP-fixed", "GP-prop", "GP-adaptive"], "runs": [910],
              "settings": {"population": 200, "generations": 100, "crossover": 0.8, "mutation": 0.15,
                           "monitor every": 10, "validation replicates": 5}},
-    # the code with the settings wiring and the evaluation cache, end to end at full scale
-    "current": {"methods": ["GP-adaptive"], "runs": [911],
+    # the code with the settings wiring and the evaluation cache, end to end at full scale; run 910 again, so
+    # that every generation can be compared with the same run of the full phase, made before the cache
+    "current": {"methods": ["GP-adaptive"], "runs": [910],
                 "settings": {"population": 200, "generations": 100, "crossover": 0.8, "mutation": 0.15,
                              "monitor every": 10, "validation replicates": 5}},
 }
@@ -41,7 +45,7 @@ PHASES = {
 
 def worker(method, run_number, phase):
     """One whole run in this process."""
-    sys.path.insert(0, str(Path(__file__).parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
     from search import Run, finish, hypervolume, normalise
     settings = PHASES[phase]["settings"]
     folder = OUT / phase / f"{method}_{run_number}"
