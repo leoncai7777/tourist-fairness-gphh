@@ -297,9 +297,9 @@ def test_the_identity_names_the_contents_of_the_tables(tmp_path, monkeypatch):
     import day
     module = launcher()
     copy = tmp_path / "processed"
-    shutil.copytree(day.PROCESSED, copy)
+    shutil.copytree(day.PROCESSED, copy, copy_function=shutil.copyfile)  # writable copy, even of read-only tables
     walk = tmp_path / "walk.csv"
-    shutil.copy(day.WALKING, walk)
+    shutil.copyfile(day.WALKING, walk)
     monkeypatch.setattr(day, "PROCESSED", copy)
     monkeypatch.setattr(day, "WALKING", walk)
     before = module.data_content()
