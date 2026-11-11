@@ -48,11 +48,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from step5 import (FORMAL, GP_METHODS, ROOT, RUNS, SETTINGS_FILE, analysis_version, check_here,  # noqa: E402
                    package_versions, run_folder)
 import evaluate6  # noqa: E402
+import forms  # noqa: E402
 
 from day import PROCESSED  # noqa: E402
 from engine import ObservedOrder  # noqa: E402
 from evaluate import Days  # noqa: E402
-from gp_rule import from_text  # noqa: E402
+from gp_rule import from_text, to_text  # noqa: E402
 from rules import RULES, TUNED_WEIGHTS, Tuned  # noqa: E402
 from search import days_for, knee, load_settings, non_dominated, normalise  # noqa: E402
 
@@ -115,8 +116,19 @@ def write_rule_list(path=RULE_LIST, root=FORMAL, methods=GP_METHODS, runs=RUNS):
             front = pd.read_csv(run_folder(method, run, root) / "results" / "front.csv.gz")
             group = f"{method}_{run:02d}"
             for n, (text, is_knee) in enumerate(zip(front["text"], front["knee"])):
-                rows.append({"rule id": f"{group}_{n:03d}", "group": group, "kind": "gp", "method": method,
-                             "run": run, "text": text, "knee": bool(is_knee)})
+                rule_id = f"{group}_{n:03d}"
+                rows.append({"rule id": rule_id, "group": group, "kind": "gp", "method": method, "run": run,
+                             "text": text, "knee": bool(is_knee)})
+                if is_knee:  # its display form: run once as a rule of its own, and watched in the knee's run
+                    shown, reason = forms.display(from_text(text))
+                    if shown is None:
+                        rows[-1]["display"] = f"none: {reason}"
+                        continue
+                    rows[-1]["display"] = f"{rule_id}_display"
+                    rows.append({"rule id": f"{rule_id}_display", "group": group, "kind": "display",
+                                 "method": method, "run": run, "text": to_text(shown), "knee": False,
+                                 "parent": rule_id, "readable": forms.readable(shown),
+                                 "tidy nodes": forms.nodes(forms.tidy(from_text(text)))})
     tuned = pd.read_csv(Path(root) / "tuned" / "tuned_front.csv")
     # the table went through a CSV file: its weights are matched to the frozen grid by position, and the
     # rules are built from the frozen values, never from the numbers read back
@@ -142,6 +154,8 @@ def rule_list_hash(path=RULE_LIST):
 def policy(row):
     if row["kind"] == "gp":
         return from_text(row["text"])
+    if row["kind"] == "display":  # built from the rounded tidy form; its constants may leave the search range
+        return from_text(row["text"], strict=False)
     if row["kind"] == "tuned":
         return Tuned(float(row["text"]))
     if row["kind"] == "hand":
@@ -169,12 +183,18 @@ def compute_block(rules, dates, replicates, settings):
     """Every rule of the block on every date and replicate; the tables of the block."""
     days = test_days(settings)
     tables = {name: [] for name in FILES}
+    shown = {}
+    if "parent" in rules:
+        shown = {p: t for p, t in zip(rules["parent"], rules["text"]) if isinstance(p, str)}
     for _, row in rules.iterrows():
         rule = policy(row)
+        watch = None
+        if row["kind"] == "gp" and bool(row["knee"]) and row["rule id"] in shown:
+            watch = from_text(shown[row["rule id"]], strict=False)
         for date in dates:
             for r in range(replicates):
                 out = evaluate6.score(rule, date, r, days, beta=settings["beta"], stop_limit=settings["stop limit"],
-                                      knee=bool(row["knee"]))
+                                      knee=bool(row["knee"]), watch=watch)
                 tag = {"rule id": row["rule id"], "date": date, "replicate": r}
                 tables["objectives"].append({**tag, **out["objectives"]})
                 for name in FILES[1:]:

@@ -10,7 +10,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "analysis"))
+import forms  # noqa: E402
 import run_test as rt  # noqa: E402
+
+from gp_rule import from_text, to_text  # noqa: E402
 
 from rules import TUNED_WEIGHTS  # noqa: E402
 from search import complete  # noqa: E402
@@ -58,6 +61,10 @@ def test_the_rule_list_is_written_once(tmp_path):
     table = rt.write_rule_list(path, root, methods=("GP-fixed", "GP-adaptive"), runs=[910])
     assert table["rule id"].is_unique
     assert table.groupby("group")["knee"].sum().loc[["GP-fixed_910", "GP-adaptive_910"]].tolist() == [1, 1]
+    shown = table[table["kind"] == "display"]  # one display form per GP knee, pointing to it
+    assert len(shown) == 2 and set(shown["parent"]) == set(table.loc[table["knee"] & (table["kind"] == "gp"),
+                                                                      "rule id"])
+    assert all(rt.policy(row) is not None for _, row in shown.iterrows())
     assert (table["kind"] == "tuned").sum() == 16 and table.loc[table["kind"] == "tuned", "knee"].sum() == 1
     assert set(table.loc[table["kind"].isin(["hand", "control"]), "text"]) == {"POP", "LEAST", "SOT", "SOS",
                                                                                "observed order"}
@@ -70,6 +77,9 @@ def small_batch(tmp_path):
     texts = pd.read_csv(PILOT / "GP-adaptive_910" / "results" / "front.csv.gz")["text"].iloc[:2]
     rows = [{"rule id": f"g_{n}", "group": "GP-adaptive_910", "kind": "gp", "method": "GP-adaptive", "run": 910,
              "text": t, "knee": n == 0} for n, t in enumerate(texts)]
+    shown, _ = forms.display(from_text(texts.iloc[0]))
+    rows.append({"rule id": "g_0_display", "group": "GP-adaptive_910", "kind": "display", "method": "GP-adaptive",
+                 "run": 910, "text": to_text(shown), "knee": False, "parent": "g_0"})
     rows += [{"rule id": "POP", "group": "baselines", "kind": "hand", "method": "POP", "run": -1, "text": "POP",
               "knee": True},
              {"rule id": "observed order", "group": "baselines", "kind": "control", "method": "observed order",
@@ -92,7 +102,9 @@ def test_a_small_batch_runs_resumes_and_refuses(tmp_path, monkeypatch, capsys):
     blocks = sorted(out.glob("blocks/*/*/done.json"))
     assert len(blocks) == 4 and not list(out.glob("blocks/*/*.partial"))
     first = pd.read_csv(out / "blocks" / "GP-adaptive_910" / "2019-01-28" / "objectives.csv.gz")
-    assert len(first) == 2 and set(first.columns) >= {"mean R_v (alpha 0)", "mean R_v (alpha 1)", "G_hat"}
+    assert len(first) == 3 and set(first.columns) >= {"mean R_v (alpha 0)", "mean R_v (alpha 1)", "G_hat"}
+    log = pd.read_csv(out / "blocks" / "GP-adaptive_910" / "2019-01-28" / "decisions.csv.gz")
+    assert set(log["rule id"]) == {"g_0"} and log["display agrees"].isin([True, False]).all()
     assert (out / "blocks" / "baselines" / "2019-01-29" / "visitors.csv.gz").exists()
     assert not (out / "launcher.lock").exists()
 

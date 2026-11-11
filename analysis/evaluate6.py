@@ -62,12 +62,21 @@ def at_least(r, theta):
     return histogram_bin(r) >= round(theta * 20)
 
 
-def score(rule, date, replicate, days, beta=0.5, stop_limit=True, knee=False):
-    """Every output of one evaluation, as a dict of small tables and numbers."""
+def score(rule, date, replicate, days, beta=0.5, stop_limit=True, knee=False, watch=None):
+    """Every output of one evaluation, as a dict of small tables and numbers. For a GP knee, watch may be
+    its display form: the full rule acts and logs, and at every decision the display form's choice is
+    computed as a shadow (forms.Shadow); the log gets a column saying whether the two agree."""
     day, observed = days.get(date)
     if not has_evaluated_visitors(day):
         raise ValueError(f"{date}: no evaluated visitor, so no mean R_v; this day is left out (plan, section 11)")
-    result = evaluate(rule, date, replicate, days, log=knee, alpha=MAIN_ALPHA, beta=beta, stop_limit=stop_limit)
+    shadow = None
+    if watch is not None:
+        if not (knee and isinstance(rule, list)):
+            raise ValueError("only a GP knee is watched")
+        from forms import Shadow
+        shadow = Shadow(rule, watch)
+    result = evaluate(shadow or rule, date, replicate, days, log=knee, alpha=MAIN_ALPHA, beta=beta,
+                      stop_limit=stop_limit)
     v = result.visitors
     b = observed.baseline.loc[v.index]
     rows = visitor_rows(day, result)
@@ -107,6 +116,10 @@ def score(rule, date, replicate, days, beta=0.5, stop_limit=True, knee=False):
             site=day.site_ids)
         if isinstance(rule, list):
             out["decisions"] = pd.DataFrame(result.run.decisions)
+            if shadow is not None:
+                if len(shadow.agrees) != len(out["decisions"]):
+                    raise AssertionError("the shadow did not see every decision")
+                out["decisions"]["display agrees"] = shadow.agrees
     return out
 
 
