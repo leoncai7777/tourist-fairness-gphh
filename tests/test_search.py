@@ -229,7 +229,7 @@ def test_parents_are_chosen_on_scores_from_the_new_environment(monkeypatch):
     run = Run("GP-fixed", 0, SMALL, monitor=False)
     first_date = run.schedule[0][0]
 
-    def fake_score(population, date, replicate, days, fallbacks):
+    def fake_score(population, date, replicate, days, fallbacks, options=None, cache=None):
         for i, rule in enumerate(population):
             better = i if date == first_date else -i
             rule.fitness.values = (float(better), 0.0)
@@ -581,3 +581,107 @@ def test_copies_of_a_rule_are_exported_once(tmp_path, monkeypatch):
     knee_groups = out["groups"][out["groups"]["rule"] == knee_id]
     assert knee_groups["visitors"].sum() == len(out["knee visitors"])
     assert out["summary"]["front members"] == out["front"]["copies"].sum()
+
+
+# ---------------------------------------------------------------------- #
+# 6. Settings, definitions, the cache, pooling and the tuned rule (F2, 4e)
+# ---------------------------------------------------------------------- #
+
+import json as json_module  # noqa: E402
+
+from search import DEFINITIONS, collect, complete, load_settings, settings_hash, tuned_front  # noqa: E402
+
+
+class FakeResult:
+    def __init__(self, mean_r, g_hat):
+        self.mean_r, self.g_hat = mean_r, g_hat
+        self.run = type("R", (), {"fallbacks": {"ARR: usual value not positive": 1}})()
+
+
+def test_copies_are_simulated_once_with_the_same_scores(monkeypatch):
+    calls = []
+
+    def fake(rule, date, r, days, **kwargs):
+        calls.append(to_text(rule))
+        return FakeResult(len(to_text(rule)) / 100, 0.3)
+    monkeypatch.setattr(search, "evaluate", fake)
+    a, b = from_text("GP-fixed | h1: AV | c: 0.5"), from_text("GP-fixed | h1: TA | c: 0.5")
+    population, fallbacks, cache = [a, copy.deepcopy(a), b], {}, {}
+    search.score(population, "d", 1000, None, fallbacks, {}, cache)
+    search.score([copy.deepcopy(b)], "d", 1000, None, fallbacks, {}, cache)  # a child equal to a parent
+    assert sorted(calls) == sorted({to_text(a), to_text(b)})
+    assert population[0].fitness.values == population[1].fitness.values
+    assert fallbacks == {"ARR: usual value not positive": 4}  # counted for every member, as before
+    calls.clear()
+    means = search.validation_means([a, copy.deepcopy(a), b], ["d1", "d2"], 2, None)
+    assert len(calls) == 2 * 2 * 2 and means[0] == means[1]
+
+
+def test_settings_hold_every_definition():
+    full = complete(SMALL)
+    assert set(DEFINITIONS) <= set(full) and full["R range"] == (0.0, 1.5)
+    assert settings_hash(complete({**SMALL, **DEFINITIONS})) == settings_hash(full)
+    assert settings_hash(complete({**SMALL, "budget": "span"})) != settings_hash(full)  # never pooled together
+    bad = [{"budget": "observed"}, {"same day": 1}, {"stop limit": "yes"}, {"peak floor": 0},
+           {"peak floor": float("nan")}, {"alpha": -0.1}, {"beta": float("inf")}, {"R range": (1.0, 1.0)},
+           {"G range": (0.0, float("nan"))}]
+    for change in bad:
+        with pytest.raises(ValueError):
+            search.check_settings(complete({**SMALL, **change}))
+
+
+@needs_data
+def test_the_definitions_reach_every_evaluation(monkeypatch):
+    days_made, scored = [], []
+
+    class FakeDays:
+        def __init__(self, **kwargs):
+            days_made.append(kwargs)
+
+    def fake(rule, date, r, days, **kwargs):
+        scored.append(kwargs)
+        return FakeResult(0.5, 0.3)
+    monkeypatch.setattr(search, "Days", FakeDays)
+    monkeypatch.setattr(search, "evaluate", fake)
+    settings = {**SMALL, "budget": "span", "same day": True, "peak floor": 10.0, "stop limit": False,
+                "alpha": 0.5, "beta": 0.0}
+    run = Run("GP-fixed", 0, settings, monitor=True)
+    for _ in range(SMALL["generations"]):
+        run.step()
+    assert days_made and all(d == {"budget": "span", "same_day": True, "peak_floor": 10.0} for d in days_made)
+    assert scored and all(k == {"alpha": 0.5, "beta": 0.0, "stop_limit": False} for k in scored)
+
+
+@needs_data
+def test_the_settings_file_must_match_the_data(tmp_path):
+    from evaluate import budget_cuts
+    good = {"settings": SMALL, "budget cuts": list(budget_cuts())}
+    (tmp_path / "good.json").write_text(json_module.dumps(good))
+    assert load_settings(tmp_path / "good.json") == complete(SMALL)
+    (tmp_path / "bad.json").write_text(json_module.dumps({**good, "budget cuts": [1.0, 2.0]}))
+    with pytest.raises(ValueError):
+        load_settings(tmp_path / "bad.json")
+
+
+def test_runs_under_other_settings_are_never_pooled(tmp_path):
+    for name, settings in (("a", "x1"), ("b", "x1"), ("c", "x2")):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "summary.json").write_text(json_module.dumps(
+            {"settings hash": settings, "code version": "c", "data version": "d"}))
+    assert len(collect([tmp_path / "a", tmp_path / "b"])) == 2
+    with pytest.raises(ValueError):
+        collect([tmp_path / "a", tmp_path / "c"])
+
+
+def test_tuned_front_by_hand(monkeypatch):
+    values = {0.0: (1.1, 0.6), 0.1: (1.0, 0.5), 1.0: (0.9, 0.55), 10.0: (0.6, 0.2)}
+
+    def fake(rule, date, r, days, **kwargs):
+        return FakeResult(*values[rule.weight])
+    monkeypatch.setattr(search, "evaluate", fake)
+    monkeypatch.setattr(search, "validation_dates", lambda: ["d1"])
+    monkeypatch.setattr(search, "days_for", lambda settings: None)
+    table, summary = tuned_front(SMALL, weights=list(values))
+    assert table["front"].tolist() == [True, True, False, True]  # 1.0 is dominated by 0.1
+    points = [((1.1 - 0) / 1.5, 1 - 0.6), ((1.0) / 1.5, 1 - 0.5), (0.6 / 1.5, 1 - 0.2)]
+    assert summary["hypervolume"] == pytest.approx(search.hypervolume(points)[0])

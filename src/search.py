@@ -47,6 +47,42 @@ SCHEDULE = 3  # named random stream for the environment schedule (STAYS is 1, CO
 SETTINGS = {"population": 200, "generations": 100, "crossover": 0.8, "mutation": 0.15,
             "monitor every": 10, "validation replicates": 5}
 
+# The definitions a run is scored under, with their provisional values. A run's settings always hold all of
+# them (complete() fills the missing ones), so they are part of its settings hash: results under other
+# definitions can never be pooled with these, and a checkpoint under other definitions never resumes.
+DEFINITIONS = {"budget": "corrected", "same day": False, "peak floor": None, "stop limit": True,
+               "alpha": 0.25, "beta": 0.5, "R range": (0.0, 1.5), "G range": (0.0, 1.0)}
+
+
+def complete(settings):
+    """The settings with every definition present; ranges as tuples, so that nothing can be changed in place."""
+    out = {**DEFINITIONS, **dict(settings)}
+    for name in ("R range", "G range"):
+        out[name] = tuple(float(v) for v in out[name])
+    return out
+
+
+def load_settings(path="configs/search.json"):
+    """The frozen settings of the formal runs, from their file. The budget cut points written there must be
+    the ones the data gives, so that the RQ3 groups are the ones the file says."""
+    from evaluate import budget_cuts
+    data = json.loads(Path(path).read_text())
+    settings = complete(data["settings"])
+    check_settings(settings)
+    if tuple(data["budget cuts"]) != budget_cuts():
+        raise ValueError(f"the budget cut points of {path} are not those of the data: {budget_cuts()}")
+    return settings
+
+
+def days_for(settings):
+    """Days loaded under the run's definitions."""
+    return Days(budget=settings["budget"], same_day=settings["same day"], peak_floor=settings["peak floor"])
+
+
+def scoring(settings):
+    """How every evaluation of the run is scored."""
+    return {"alpha": settings["alpha"], "beta": settings["beta"], "stop_limit": settings["stop limit"]}
+
 
 FIRST_TRAINING_REPLICATE = 1000  # validation and test use replicates 0..K-1, so K must be at most 1000
 
@@ -83,6 +119,21 @@ def check_settings(settings):
             raise ValueError(f"{name} must be a finite number of at least 0")
     if settings["crossover"] + settings["mutation"] > 1:
         raise ValueError("crossover and mutation add up to more than 1")
+    if settings["budget"] not in ("corrected", "span"):
+        raise ValueError(f"budget must be 'corrected' or 'span', not {settings['budget']!r}")
+    for name in ("same day", "stop limit"):
+        if not isinstance(settings[name], bool):
+            raise ValueError(f"{name} must be true or false")
+    floor = settings["peak floor"]
+    if floor is not None and not (isinstance(floor, (int, float)) and math.isfinite(floor) and floor > 0):
+        raise ValueError("peak floor must be none or a finite positive number")
+    for name in ("alpha", "beta"):
+        if not (isinstance(settings[name], (int, float)) and math.isfinite(settings[name]) and settings[name] >= 0):
+            raise ValueError(f"{name} must be a finite number of at least 0")
+    for name in ("R range", "G range"):
+        low, high = settings[name]
+        if not (math.isfinite(low) and math.isfinite(high) and high > low):
+            raise ValueError(f"{name} must be two finite numbers, the second larger")
 
 
 def search_seed(method, run_number):
@@ -252,13 +303,21 @@ def breed(population, settings, counts):
 # A run
 # ---------------------------------------------------------------------- #
 
-def score(population, date, replicate, days, fallbacks):
+def score(population, date, replicate, days, fallbacks, options={}, cache=None):
+    """Both objectives of every rule on one day and replicate. An evaluation is deterministic, so a rule
+    whose text was already scored on this day and replicate (a copy, or a child equal to its parent)
+    takes the stored result: the same numbers, one simulation fewer. Fallbacks count per member."""
+    cache = {} if cache is None else cache
     for rule in population:
-        result = evaluate(rule, date, replicate, days)
-        if not (math.isfinite(result.mean_r) and math.isfinite(result.g_hat)):
-            raise ValueError(f"non-finite objectives {result.mean_r}, {result.g_hat} on {date}")
-        rule.fitness.values = (result.mean_r, result.g_hat)
-        for reason, n in result.run.fallbacks.items():
+        text = to_text(rule)
+        if text not in cache:
+            result = evaluate(rule, date, replicate, days, **options)
+            if not (math.isfinite(result.mean_r) and math.isfinite(result.g_hat)):
+                raise ValueError(f"non-finite objectives {result.mean_r}, {result.g_hat} on {date}")
+            cache[text] = (result.mean_r, result.g_hat, dict(result.run.fallbacks))
+        mean_r, g_hat, rule_fallbacks = cache[text]
+        rule.fitness.values = (mean_r, g_hat)
+        for reason, n in rule_fallbacks.items():
             fallbacks[reason] = fallbacks.get(reason, 0) + n
 
 
@@ -282,16 +341,17 @@ class Run:
     def __init__(self, method, run_number, settings=SETTINGS, folder=None, monitor=True):
         if method not in METHODS:
             raise ValueError(f"unknown method {method!r}")
+        settings = complete(settings)
         check_settings(settings)
         self.method, self.run_number = method, run_number
-        self.settings = MappingProxyType(dict(settings))  # fixed: the schedule below depends on it
+        self.settings = MappingProxyType(settings)  # fixed: the schedule below depends on it
         self.schedule = schedule(run_number, self.settings["generations"])
         self.folder = Path(folder) if folder else None
         self.monitor = monitor
         self.log, self.monitor_log, self.generation = [], [], 0
         random.seed(search_seed(method, run_number))
         self.population = [new_individual(method) for _ in range(self.settings["population"])]
-        self.validation = Days()
+        self.validation = days_for(self.settings)
 
     # checkpoints
 
@@ -345,7 +405,7 @@ class Run:
         run.method, run.run_number, run.settings = method, run_number, MappingProxyType(dict(settings))
         run.schedule, run.folder, run.monitor = state["schedule"], Path(folder), monitor
         run.log, run.monitor_log, run.generation = state["log"], state["monitor log"], state["generation"]
-        run.population, run.validation = population, Days()
+        run.population, run.validation = population, days_for(settings)
         random.setstate(state["random"])  # set after the population is rebuilt (section 13, item 7)
         return run
 
@@ -355,15 +415,16 @@ class Run:
         """One generation (section 4.2)."""
         started = time.time()
         date, replicate = self.schedule[self.generation]
-        days = Days()  # this generation's day only; a run reads each training day once per pass
+        days = days_for(self.settings)  # this generation's day only; a run reads each training day once per pass
         counts = {"crossover children": 0, "crossover new texts": 0, "mutation children": 0,
                   "mutation new texts": 0, "reproduction children": 0, "reproduction new texts": 0,
                   "reverts": 0, "constant cuts": 0}
         fallbacks = {}
-        score(self.population, date, replicate, days, fallbacks)
+        cache = {}  # this generation's day and replicate only
+        score(self.population, date, replicate, days, fallbacks, scoring(self.settings), cache)
         rank(self.population)
         children = breed(self.population, self.settings, counts)
-        score(children, date, replicate, days, fallbacks)
+        score(children, date, replicate, days, fallbacks, scoring(self.settings), cache)
         self.population = tools.selNSGA2(self.population + children, self.settings["population"])
         front = tools.sortNondominated(self.population, len(self.population), first_front_only=True)[0]
         texts = [to_text(r) for r in self.population]
@@ -373,7 +434,8 @@ class Run:
                          "max nodes": max(nodes), "duplicates": len(texts) - len(set(texts)),
                          "unique share": len(set(texts)) / len(texts),
                          "largest share": max(texts.count(t) for t in set(texts)) / len(texts), **counts,
-                         "fallbacks": fallbacks, "seconds": time.time() - started})
+                         "fallbacks": fallbacks, "evaluations": 2 * len(self.population),
+                         "evaluations run": len(cache), "seconds": time.time() - started})
         if self.monitor and (self.generation + 1) % self.settings["monitor every"] == 0:
             self.watch(front)
         self.generation += 1
@@ -382,10 +444,14 @@ class Run:
     def watch(self, front):
         """Score the generation's non-dominated rules on the seven monitoring days, replicate 0.
         Only watched: nothing here changes the run or draws a random number."""
-        scores = []
+        scores, done = [], {}
         for rule in front:
-            results = [evaluate(rule, date, 0, self.validation) for date in monitoring_dates()]
-            scores.append((float(np.mean([r.mean_r for r in results])), float(np.mean([r.g_hat for r in results]))))
+            text = to_text(rule)
+            if text not in done:  # copies of a rule are scored once
+                results = [evaluate(rule, date, 0, self.validation, **scoring(self.settings))
+                           for date in monitoring_dates()]
+                done[text] = (float(np.mean([r.mean_r for r in results])), float(np.mean([r.g_hat for r in results])))
+            scores.append(done[text])
         self.monitor_log.append({"generation": self.generation, "front": sorted(scores)})
 
     def evolve(self, until=None):
@@ -472,28 +538,38 @@ def knee(points, sizes, texts):
     return min(beyond, key=lambda i: (-side * cross(points[i]) / length, *order(i)))
 
 
-def validation_means(population, dates, k, days):
+def label(rule):
+    """The identity of a GP rule, or the name of another policy."""
+    return identity(rule) if isinstance(rule, list) else rule.name
+
+
+def validation_means(population, dates, k, days, options={}):
     """Each rule's validation mean of both objectives: the mean over days and replicates of the day's
     objectives (not visitors pooled over days). Every evaluation and every mean must be finite; a bad
     one stops the run here, before any front is formed, so it can never drop out as a dominated point."""
-    means = []
+    means, done = [], {}
     for rule in population:
+        key = to_text(rule) if isinstance(rule, list) else rule.name
+        if key in done:  # a copy of a rule already scored: the same days and replicates give the same means
+            means.append(done[key])
+            continue
         results = []
         for date in dates:
             for r in range(k):
-                result = evaluate(rule, date, r, days)
+                result = evaluate(rule, date, r, days, **options)
                 if not (math.isfinite(result.mean_r) and math.isfinite(result.g_hat)):
-                    raise ValueError(f"rule {identity(rule)} on {date}, replicate {r}: non-finite objectives "
+                    raise ValueError(f"rule {label(rule)} on {date}, replicate {r}: non-finite objectives "
                                      f"({result.mean_r}, {result.g_hat})")
                 results.append(result)
         mean = (float(np.mean([x.mean_r for x in results])), float(np.mean([x.g_hat for x in results])))
         if not all(math.isfinite(v) for v in mean):
-            raise ValueError(f"rule {identity(rule)}: non-finite validation mean {mean}")
+            raise ValueError(f"rule {label(rule)}: non-finite validation mean {mean}")
+        done[key] = mean
         means.append(mean)
     return means
 
 
-def finish(run, folder=None, value_range=RANGE):
+def finish(run, folder=None):
     """Section 5: the final population re-evaluated on all validation days with replicates 0..K-1; the
     front of the validation means; its hypervolume and knee; and the outputs for RQ2 and RQ3.
 
@@ -506,9 +582,10 @@ def finish(run, folder=None, value_range=RANGE):
     if run.generation != run.settings["generations"]:
         raise ValueError("the run has not finished its generations")
     k = run.settings["validation replicates"]
-    dates, days = validation_dates(), Days()
+    dates, days, options = validation_dates(), days_for(run.settings), scoring(run.settings)
+    value_range = {"R": run.settings["R range"], "G": run.settings["G range"]}
     population = run.population
-    means = validation_means(population, dates, k, days)
+    means = validation_means(population, dates, k, days, options)
     front = non_dominated(means)
     points = normalise([means[i] for i in front], value_range)
     area, outside = hypervolume(points)
@@ -532,7 +609,7 @@ def finish(run, folder=None, value_range=RANGE):
         for date in dates:
             day = days.get(date)[0]
             for r in range(k):
-                result = evaluate(rule, date, r, days, log=is_knee)
+                result = evaluate(rule, date, r, days, log=is_knee, **options)
                 tag = {**tag_run, "rule": rule_id, "date": date, "replicate": r}
                 rows = visitor_rows(day, result)
                 groups.append(grouped(rows).assign(**tag))
@@ -564,3 +641,46 @@ def finish(run, folder=None, value_range=RANGE):
 
 def identity_of_text(text):
     return identity(from_text(text))
+
+
+# ---------------------------------------------------------------------- #
+# The tuned weighted rule (4e) and pooling runs
+# ---------------------------------------------------------------------- #
+
+def tuned_front(settings, folder=None, weights=None):
+    """The tuned weighted rule A - weight * VS for every weight of the fixed grid, scored like a run's
+    final population: validation means over the same days and replicates, the front of those means and
+    its hypervolume under the same normalisation. One deterministic front, not a set of runs."""
+    from rules import TUNED_WEIGHTS, Tuned
+    settings = complete(settings)
+    check_settings(settings)
+    weights = TUNED_WEIGHTS if weights is None else weights
+    policies = [Tuned(w) for w in weights]
+    means = validation_means(policies, validation_dates(), settings["validation replicates"], days_for(settings),
+                             scoring(settings))
+    front = non_dominated(means)
+    points = normalise([means[i] for i in front], {"R": settings["R range"], "G": settings["G range"]})
+    area, outside = hypervolume(points)
+    table = pd.DataFrame({"weight": weights, "mean R_v": [m[0] for m in means], "G_hat": [m[1] for m in means]})
+    table["front"] = table.index.isin(front)
+    summary = {"rule": "tuned weighted", "settings hash": settings_hash(settings), "code version": code_version(),
+               "data version": data_version(), "hypervolume": area, "front rules": len(front),
+               "front points not better than the reference": outside}
+    if folder is not None:
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        table.assign(**{k: summary[k] for k in ("settings hash", "code version", "data version")}).to_csv(
+            folder / "tuned_front.csv", index=False)
+        (folder / "summary.json").write_text(json.dumps(summary, indent=1))
+    return table, summary
+
+
+def collect(folders):
+    """The summaries of several finished runs, for pooling. Runs made under other settings, other code or
+    other data are refused, so no table ever mixes them."""
+    summaries = [json.loads((Path(f) / "summary.json").read_text()) for f in folders]
+    for key in ("settings hash", "code version", "data version"):
+        values = {s[key] for s in summaries}
+        if len(values) > 1:
+            raise ValueError(f"the runs differ in {key}: {sorted(values)}; they cannot be pooled")
+    return summaries

@@ -159,14 +159,7 @@ def test_the_run_records_the_rule():
 # 3. The methods against each other
 # ---------------------------------------------------------------------- #
 
-class Tuned:
-    """The tuned weighted rule of section 8: A - lambda * VS through choose_site."""
-    def __init__(self, weight):
-        self.weight = weight
-
-    def choose(self, engine, k, candidates):
-        return choose_site(engine, k, candidates, engine.day.attractiveness[candidates], self.weight,
-                           visit_share(engine, candidates))
+from rules import Tuned  # noqa: E402  (the tuned weighted rule, 4e)
 
 
 @needs_data
