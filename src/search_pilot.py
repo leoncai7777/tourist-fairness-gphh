@@ -32,6 +32,10 @@ PHASES = {
     "full": {"methods": ["GP-fixed", "GP-prop", "GP-adaptive"], "runs": [910],
              "settings": {"population": 200, "generations": 100, "crossover": 0.8, "mutation": 0.15,
                           "monitor every": 10, "validation replicates": 5}},
+    # the code with the settings wiring and the evaluation cache, end to end at full scale
+    "current": {"methods": ["GP-adaptive"], "runs": [911],
+                "settings": {"population": 200, "generations": 100, "crossover": 0.8, "mutation": 0.15,
+                             "monitor every": 10, "validation replicates": 5}},
 }
 
 
@@ -50,7 +54,8 @@ def worker(method, run_number, phase):
     monitored = [{"generation": m["generation"], "members": len(m["front"]),
                   "hypervolume": hypervolume(normalise(m["front"]))[0]} for m in run.monitor_log]
     files = {p.name: p.stat().st_size for p in (folder / "results").iterdir()}
-    report = {"method": method, "run": run_number, "settings": settings,
+    from search import code_version
+    report = {"method": method, "run": run_number, "settings": settings, "code version": code_version(),
               "search seconds": searched - started, "end seconds": finished - searched,
               "peak memory MB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2 ** 20,  # bytes on macOS
               "generations": run.log, "monitoring": monitored, "summary": out["summary"],
