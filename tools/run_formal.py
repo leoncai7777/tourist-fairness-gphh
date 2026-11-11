@@ -38,6 +38,7 @@ import hashlib
 import json
 import os
 import resource
+import signal
 import subprocess
 import sys
 import time
@@ -202,21 +203,41 @@ def tuned(settings_path, out):
 # The batch
 # ---------------------------------------------------------------------- #
 
+def stop(processes, grace=30):
+    """Stop worker processes: ask first, then force any still running after `grace` seconds."""
+    for process in processes:
+        if process.poll() is None:
+            process.terminate()
+    deadline = time.time() + grace
+    for process in processes:
+        while process.poll() is None and time.time() < deadline:
+            time.sleep(0.5)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
 def run_all(commands, workers, start=None):
-    """Run the commands, at most `workers` at once; returns the exit code of each, in order."""
+    """Run the commands, at most `workers` at once; returns the exit code of each, in order. If the
+    launcher is stopped (Ctrl-C, or a terminate signal), its running workers are stopped before it
+    leaves, so that no worker of this batch is left writing when the lock is released."""
     start = start or (lambda command: subprocess.Popen(command, cwd=ROOT))
     waiting, running, codes = list(enumerate(commands)), {}, {}
-    while waiting or running:
-        while waiting and len(running) < workers:
-            i, command = waiting.pop(0)
-            running[i] = start(command)
-        for i, process in list(running.items()):
-            code = process.poll()
-            if code is not None:
-                codes[i] = code
-                del running[i]
-        if running:
-            time.sleep(1)
+    try:
+        while waiting or running:
+            while waiting and len(running) < workers:
+                i, command = waiting.pop(0)
+                running[i] = start(command)
+            for i, process in list(running.items()):
+                code = process.poll()
+                if code is not None:
+                    codes[i] = code
+                    del running[i]
+            if running:
+                time.sleep(1)
+    except BaseException:
+        stop(list(running.values()))
+        raise
     return [codes[i] for i in range(len(commands))]
 
 
@@ -270,6 +291,8 @@ def main():
     out = Path(args.out_root) / identity["settings hash"]
     out.mkdir(parents=True, exist_ok=True)
     held = lock(out)
+    # A terminate signal ends the launcher like Ctrl-C does, so the workers are stopped and the lock released.
+    signal.signal(signal.SIGTERM, lambda number, frame: sys.exit(f"stopped by signal {number}"))
     try:
         batch_main(args, settings, identity, out, first, last)
     finally:

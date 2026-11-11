@@ -252,3 +252,37 @@ def test_a_second_launcher_on_the_same_folder_stops(tmp_path):
 def test_the_tools_version_names_the_commit():
     version = launcher().tools_version()
     assert len(version["tools version"]) == 10 and version["commit"] not in ("", None)
+
+
+class Endless:
+    """A worker that never finishes on its own; records being stopped."""
+    def __init__(self):
+        self.code, self.terminated = None, False
+
+    def poll(self):
+        return self.code
+
+    def terminate(self):
+        self.terminated, self.code = True, -15
+
+    def kill(self):
+        self.code = -9
+
+    def wait(self):
+        return self.code
+
+
+def test_stopping_the_launcher_stops_its_workers(monkeypatch):
+    module = launcher()
+    started = []
+
+    def start(command):
+        started.append(Endless())
+        return started[-1]
+
+    def interrupted(seconds):
+        raise KeyboardInterrupt  # Ctrl-C while the workers run
+    monkeypatch.setattr(module.time, "sleep", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        module.run_all([("job", i) for i in range(5)], 3, start=start)
+    assert len(started) == 3 and all(p.terminated for p in started)  # no worker left running
