@@ -231,3 +231,6 @@ data/toptw/
 
 # Pilot runs of the search: checkpoints and per-run outputs stay local; only each phase's record.md is kept
 outputs/search/pilot/*/*/
+
+# Formal runs: checkpoints and per-run outputs stay local (large); the records written from them are kept
+outputs/search/formal/
