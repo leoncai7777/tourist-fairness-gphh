@@ -125,6 +125,8 @@ def test_the_block_check_refuses_more(baseline_block, name, change):
         rt.check_block(t, rules, ["2019-01-28"], 1)
 
 
+@pytest.mark.skipif(not (ROOT / "outputs" / "search" / "pilot" / "full" / "GP-adaptive_910" / "results").exists(),
+                    reason="no pilot outputs")
 def test_decision_logs_are_checked_and_an_empty_one_is_legal():
     from gp_rule import from_text
     front = pd.read_csv(ROOT / "outputs" / "search" / "pilot" / "full" / "GP-adaptive_910" / "results" / "front.csv.gz")
