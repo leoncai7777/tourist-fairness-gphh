@@ -333,7 +333,7 @@ def reproduced(tmp_path_factory):
     return out
 
 
-def formal_identity(out, settings, **change):
+def formal_identity(out, settings, root, **change):
     keep = single.check_here, single.check_single, single.addendum_version
     single.check_here = lambda: {"stand-in": "the Step 5 identity"}
     single.check_single = lambda *a, **k: None
@@ -341,8 +341,7 @@ def formal_identity(out, settings, **change):
         single.addendum_version = lambda: change["addendum version"]
     try:
         rules = rs.read_table(out / "rules.csv")
-        return single.identity_of(settings, rt.TEST_SETTINGS, out / "rules.csv", rules, formal=True,
-                                  root=out.parent / "root",
+        return single.identity_of(settings, rt.TEST_SETTINGS, out / "rules.csv", rules, formal=True, root=root,
                                   out=out, runs=[900], expected={"settings hash": single.settings_hash(settings)})
     finally:
         single.check_here, single.check_single, single.addendum_version = keep
@@ -353,7 +352,7 @@ def test_the_reproduction_writes_a_matching_pass_record(reproduced):
     record = json.loads((reproduced / "reproduced.json").read_text())
     assert record["runs reproduced"] == 1 and record["largest difference"] <= 1e-12
     assert record["rule list hash"] == rt.rule_list_hash(reproduced / "rules.csv") and record["schedules hash"]
-    identity = formal_identity(reproduced, pilot_settings())
+    identity = formal_identity(reproduced, pilot_settings(), reproduced.parent / "root")
     assert identity["gp-single search"] == record["gp-single search"]
     with pytest.raises(SystemExit):  # the check is run once
         single.reproduce_main(1, root=reproduced.parent / "root", runs=[900], out=reproduced, settings=pilot_settings())
@@ -361,30 +360,34 @@ def test_the_reproduction_writes_a_matching_pass_record(reproduced):
 
 @needs_pilot
 def test_a_start_is_refused_when_the_pass_record_does_not_match(reproduced, tmp_path):
-    (tmp_path / "root").symlink_to(reproduced.parent / "root")
+    """Each case changes one thing in a copy that is first shown to pass unchanged, with the same search root as
+    the pass record, and must fail for that thing."""
+    root, settings = reproduced.parent / "root", pilot_settings()
 
     def copy():
         c = tmp_path / f"c{len(list(tmp_path.iterdir()))}"
         shutil.copytree(reproduced, c)
+        formal_identity(c, settings, root)  # unchanged, it passes
         return c
     c = copy()  # the rule list changed
     t = rs.read_table(c / "rules.csv")
     t.loc[0, "nodes"] = t.loc[0, "nodes"] + 1
     t.to_csv(c / "rules.csv", index=False)
-    with pytest.raises(SystemExit):
-        formal_identity(c, pilot_settings())
+    with pytest.raises(SystemExit, match=r"\['rule list hash'\]"):
+        formal_identity(c, settings, root)
     c = copy()  # another search batch in the record
     record = json.loads((c / "reproduced.json").read_text())
     record["gp-single search"]["results hash"] = "000000000000"
     (c / "reproduced.json").write_text(json.dumps(record))
-    with pytest.raises(SystemExit):
-        formal_identity(c, pilot_settings())
-    with pytest.raises(SystemExit):  # another addendum version
-        formal_identity(copy(), pilot_settings(), **{"addendum version": "another"})
+    with pytest.raises(SystemExit, match=r"\['gp-single search'\]"):
+        formal_identity(c, settings, root)
+    c = copy()  # another addendum version
+    with pytest.raises(SystemExit, match=r"\['addendum version'\]"):
+        formal_identity(c, settings, root, **{"addendum version": "another"})
     c = copy()  # no pass record
     (c / "reproduced.json").unlink()
-    with pytest.raises(SystemExit):
-        formal_identity(c, pilot_settings())
+    with pytest.raises(SystemExit, match="has not passed"):
+        formal_identity(c, settings, root)
 
 
 # ---------------------------------------------------------------------- #
