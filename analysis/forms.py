@@ -126,21 +126,27 @@ def quiet_choice(engine, candidates, h1, w, vs):
 
 
 class Shadow:
-    """Acts as the full rule (with its decision log); at every decision also computes the other rule's
-    choice, which is never acted on. agrees[i] is True when the two choices of decision i are the same."""
-    def __init__(self, full, other):
-        self.full, self.other = GPRule(full, log=True), GPRule(other, log=False)
+    """Acts as the full rule (with its decision log); at every decision also computes the choice of each other
+    rule, which is never acted on. others maps a name to a rule; agrees[name][i] is True when that rule's choice
+    at decision i is the full rule's. The fallback counts are put back as they were, whatever happens."""
+    def __init__(self, full, others):
+        self.full = GPRule(full, log=True)
+        self.others = {name: GPRule(rule, log=False) for name, rule in others.items()}
         self.name = self.full.name
-        self.agrees = []
+        self.agrees = {name: [] for name in others}
 
     def choose(self, engine, k, candidates):
         j = self.full.choose(engine, k, candidates)
-        kept = dict(engine.run.fallbacks)
-        with np.errstate(all="ignore"):
-            h1, w, vs, _ = self.other.parts(engine, k, candidates)
-        engine.run.fallbacks.clear()
-        engine.run.fallbacks.update(kept)
-        self.agrees.append(bool(quiet_choice(engine, candidates, h1, w, vs) == j))
+        for name, other in self.others.items():
+            kept = dict(engine.run.fallbacks)
+            try:
+                with np.errstate(all="ignore"):
+                    h1, w, vs, _ = other.parts(engine, k, candidates)
+                choice = quiet_choice(engine, candidates, h1, w, vs)
+            finally:
+                engine.run.fallbacks.clear()
+                engine.run.fallbacks.update(kept)
+            self.agrees[name].append(bool(choice == j))
         return j
 
 

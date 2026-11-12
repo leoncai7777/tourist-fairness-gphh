@@ -7,26 +7,37 @@ block, several blocks at once. A block is one group of rules (the front rules
 of one run, or the baselines) on a few consecutive dates.
 
 The rule list is written once, by the reproduction check (write_rule_list),
-with its content hash; this file reads only that list. It holds every distinct
-front rule of the 90 runs with its knee flag, every weight of the tuned rule
-(its knee chosen on the validation days by the frozen knee rule, ties to the
-smaller weight), the four hand rules and the observed-order control.
+which then writes its pass record, reproduced.json, binding the list's hash to
+the code, tables, settings and packages it passed under. It holds every distinct
+front rule of the 90 runs with its knee flag, the display form of each GP knee,
+every weight of the tuned rule (its knee chosen on the validation days by the
+frozen knee rule, ties to the smaller weight), the four hand rules and the
+observed-order control.
 
-Identity. At the start the launcher fixes what the batch is: the Step 5
-identity of the code and tables it runs on (checked), the Step 6 settings hash,
-the analysis code version, the rule list hash and the package versions, written
-to task.json. A folder holding another task.json is refused before anything
-runs. Every block carries the same identity in its done.json.
+Identity. The formal batch starts only when the code and tables are Step 5's,
+the search settings actually loaded have the Step 5 settings hash, every Step 5
+run is complete, the rule list covers what it must, and the pass record
+matches the rule list, the code, the tables, the settings and the packages of
+this start. The identity (the settings by their content hash, not their path)
+goes to task.json; a folder holding another task.json is refused before
+anything runs, and every block carries the same identity in its done.json.
+Runs that are not formal (--not-formal) may only use validation days and may
+not write under outputs/test/; they are marked as such.
 
-Completion. A block is written to a temporary folder, read back (every file;
-unique keys; finite objectives; one row per rule, date and replicate), then
-renamed into place, and done.json is written last. A block without done.json is
-computed again from the start; one with done.json of another identity stops the
-batch. One launcher per output folder (launcher.lock). Ctrl-C or a termination
-signal stops the workers before the lock is released.
+Completion. A block is written to a temporary folder and checked before it
+counts: every file reads back as written; the objectives are exactly one finite
+row per rule, date and replicate; the groups, peaks, per-visitor rows, hourly
+tables and decision logs have unique keys, cover what they must and hold
+finite route parts and scores. Then it is renamed into place and done.json,
+with the rows, size and hash of every file, is written last. On a restart a
+block without done.json is computed again; one of another identity, or with a
+file missing or of another size, stops the batch. --verify checks every block's
+hashes after the batch. One launcher per output folder (launcher.lock). Ctrl-C
+or a termination signal stops the workers before the lock is released.
 
-  python3 analysis/run_test.py --workers 12                    # from the frozen Step 6 snapshot
-  python3 analysis/run_test.py --rules R --settings S --out O  # other lists or days, e.g. the measured run
+  python3 analysis/run_test.py --workers 12          # the formal batch, from the frozen Step 6 snapshot
+  python3 analysis/run_test.py --verify              # after it: every block complete and unchanged
+  python3 analysis/run_test.py --not-formal --rules R --test-settings S --out O   # e.g. the measured run
 """
 
 import argparse
@@ -39,6 +50,7 @@ import shutil
 import signal
 import sys
 import time
+from itertools import product
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -46,8 +58,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from step5 import (FORMAL, GP_METHODS, ROOT, RUNS, SETTINGS_FILE, analysis_version, check_complete,  # noqa: E402
-                   check_here, package_versions, run_folder)
+from step5 import (read_table, FORMAL, GP_METHODS, ROOT, RUNS, SETTINGS_FILE, STEP5, analysis_version,  # noqa: E402
+                   check_complete, check_here, package_versions, run_folder)
 import evaluate6  # noqa: E402
 import forms  # noqa: E402
 
@@ -56,13 +68,16 @@ from engine import ObservedOrder  # noqa: E402
 from evaluate import Days  # noqa: E402
 from gp_rule import from_text, to_text  # noqa: E402
 from rules import RULES, TUNED_WEIGHTS, Tuned  # noqa: E402
-from search import days_for, knee, load_settings, non_dominated, normalise  # noqa: E402
+from search import knee, load_settings, normalise, settings_hash  # noqa: E402
 
 TEST_SETTINGS = ROOT / "configs" / "test.json"
-OUT = ROOT / "outputs" / "test" / "2019"
+OUTPUTS = ROOT / "outputs" / "test"
+OUT = OUTPUTS / "2019"
 RULE_LIST = OUT / "rules.csv"
+PASS_RECORD = OUT / "reproduced.json"
 KEYS = ["rule id", "date", "replicate"]
 CONTROL = "observed order"
+SITES = 15
 
 
 # ---------------------------------------------------------------------- #
@@ -86,10 +101,10 @@ def test_settings_hash(data):
 def dates_of(data):
     """The dates of the year and split, without any day that has no evaluated visitor (plan, section 11):
     such a day has no mean R_v. Decided from the processed visitor table, before any rule runs."""
-    days = pd.read_csv(PROCESSED / f"days_{data['year']}.csv")
+    days = read_table(PROCESSED / f"days_{data['year']}.csv")
     if data["split"] != "all":
         days = days[days["split"] == data["split"]]
-    visitors = pd.read_csv(PROCESSED / f"visitors_{data['year']}.csv.gz", usecols=["date", "stops"])
+    visitors = read_table(PROCESSED / f"visitors_{data['year']}.csv.gz", usecols=["date", "stops"])
     with_evaluated = set(visitors.loc[visitors["stops"] >= 2, "date"])
     return sorted(d for d in days["date"] if d in with_evaluated)
 
@@ -105,6 +120,13 @@ def tuned_knee_weight(table, settings):
     return table.index.get_loc(front.index[i])
 
 
+def check_tuned_table(tuned):
+    """The tuned table went through a CSV file: its weights are matched to the frozen grid by position, and
+    the rules are built from the frozen values, never from the numbers read back."""
+    if len(tuned) != len(TUNED_WEIGHTS) or not np.allclose(tuned["weight"], TUNED_WEIGHTS, rtol=1e-12, atol=0):
+        raise SystemExit("the tuned rule's weights are not the frozen grid")
+
+
 def write_rule_list(path=RULE_LIST, root=FORMAL, methods=GP_METHODS, runs=RUNS):
     """Written once, by the reproduction check. Refuses to overwrite a list that is there."""
     path = Path(path)
@@ -114,7 +136,7 @@ def write_rule_list(path=RULE_LIST, root=FORMAL, methods=GP_METHODS, runs=RUNS):
     rows = []
     for method in methods:
         for run in runs:
-            front = pd.read_csv(run_folder(method, run, root) / "results" / "front.csv.gz")
+            front = read_table(run_folder(method, run, root) / "results" / "front.csv.gz")
             group = f"{method}_{run:02d}"
             for n, (text, is_knee) in enumerate(zip(front["text"], front["knee"])):
                 rule_id = f"{group}_{n:03d}"
@@ -130,11 +152,8 @@ def write_rule_list(path=RULE_LIST, root=FORMAL, methods=GP_METHODS, runs=RUNS):
                                  "method": method, "run": run, "text": to_text(shown), "knee": False,
                                  "parent": rule_id, "readable": forms.readable(shown),
                                  "tidy nodes": forms.nodes(forms.tidy(from_text(text)))})
-    tuned = pd.read_csv(Path(root) / "tuned" / "tuned_front.csv")
-    # the table went through a CSV file: its weights are matched to the frozen grid by position, and the
-    # rules are built from the frozen values, never from the numbers read back
-    if len(tuned) != len(TUNED_WEIGHTS) or not np.allclose(tuned["weight"], TUNED_WEIGHTS, rtol=1e-12, atol=0):
-        raise SystemExit("the tuned rule's weights are not the frozen grid")
+    tuned = read_table(Path(root) / "tuned" / "tuned_front.csv")
+    check_tuned_table(tuned)
     knee_row = tuned_knee_weight(tuned, settings)
     for n, (w, on_front) in enumerate(zip(TUNED_WEIGHTS, tuned["front"])):
         rows.append({"rule id": f"tuned_{n:02d}", "group": "baselines", "kind": "tuned", "method": "tuned",
@@ -143,9 +162,37 @@ def write_rule_list(path=RULE_LIST, root=FORMAL, methods=GP_METHODS, runs=RUNS):
         rows.append({"rule id": name, "group": "baselines", "kind": "hand" if name in RULES else "control",
                      "method": name, "run": -1, "text": name, "knee": True})
     table = pd.DataFrame(rows)
+    check_rule_list(table, methods, runs)
     path.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(path, index=False)
     return table
+
+
+def check_rule_list(rules, methods=GP_METHODS, runs=RUNS):
+    """What the list must cover: every method and run as a group with exactly one GP knee, whose display form
+    (if it has one) points back to it; the 16 tuned weights with one knee; the four hand rules and the
+    control; unique rule ids."""
+    problems = []
+    if rules["rule id"].duplicated().any():
+        problems.append("a repeated rule id")
+    gp = rules[rules["kind"] == "gp"]
+    expected = {f"{m}_{r:02d}" for m in methods for r in runs}
+    if set(gp["group"]) != expected:
+        problems.append(f"GP groups {len(set(gp['group']))}, expected {len(expected)}")
+    knees = gp.groupby("group")["knee"].sum()
+    if not (knees == 1).all():
+        problems.append(f"groups without exactly one knee: {list(knees[knees != 1].index)[:5]}")
+    shown = rules[rules["kind"] == "display"]
+    knee_ids = set(gp.loc[gp["knee"].astype(bool), "rule id"])
+    if not set(shown["parent"]) <= knee_ids:
+        problems.append("a display form whose parent is not a GP knee")
+    tuned = rules[rules["kind"] == "tuned"]
+    if len(tuned) != len(TUNED_WEIGHTS) or tuned["knee"].astype(bool).sum() != 1:
+        problems.append("the tuned weights are not 16 with one knee")
+    if sorted(rules.loc[rules["kind"].isin(["hand", "control"]), "text"]) != sorted(list(RULES) + [CONTROL]):
+        problems.append("the hand rules and the control are not all there")
+    if problems:
+        raise SystemExit("the rule list does not cover what it must: " + "; ".join(problems))
 
 
 def rule_list_hash(path=RULE_LIST):
@@ -169,20 +216,15 @@ def policy(row):
 # ---------------------------------------------------------------------- #
 
 FILES = ("objectives", "groups", "peaks", "visitors", "hourly", "decisions")
-_days = {}
-
-
-def test_days(settings):
-    key = (settings["budget"], settings["same day"], settings["peak floor"])
-    if key not in _days:
-        _days[key] = Days(budget=settings["budget"], same_day=settings["same day"],
-                          peak_floor=settings["peak floor"], test=True)
-    return _days[key]
+VISITOR_VALUES = ["A", "C", "T", "A observed", "C observed", "T observed"] + \
+    [f"R_v (alpha {evaluate6.label(a)})" for a in evaluate6.ALPHAS]
 
 
 def compute_block(rules, dates, replicates, settings):
-    """Every rule of the block on every date and replicate; the tables of the block."""
-    days = test_days(settings)
+    """Every rule of the block on every date and replicate; the tables of the block. The days are loaded for
+    this block only, so a worker's memory does not grow with the dates it has met."""
+    days = Days(budget=settings["budget"], same_day=settings["same day"], peak_floor=settings["peak floor"],
+                test=True)
     tables = {name: [] for name in FILES}
     shown = {}
     if "parent" in rules:
@@ -191,7 +233,7 @@ def compute_block(rules, dates, replicates, settings):
         rule = policy(row)
         watch = None
         if row["kind"] == "gp" and bool(row["knee"]) and row["rule id"] in shown:
-            watch = from_text(shown[row["rule id"]], strict=False)
+            watch = {"display": from_text(shown[row["rule id"]], strict=False)}
         for date in dates:
             for r in range(replicates):
                 out = evaluate6.score(rule, date, r, days, beta=settings["beta"], stop_limit=settings["stop limit"],
@@ -205,24 +247,64 @@ def compute_block(rules, dates, replicates, settings):
             for name, rows in tables.items() if len(rows)}
 
 
-def read_back(folder, tables, rules, dates, replicates):
-    """Every file reads back with the rows written; the objectives have one finite row per rule, date and
-    replicate of the block."""
-    for name, table in tables.items():
-        again = pd.read_csv(folder / f"{name}.csv.gz")
-        if len(again) != len(table) or list(again.columns) != list(table.columns):
-            raise ValueError(f"{name} does not read back as written")
-    objectives = pd.read_csv(folder / "objectives.csv.gz")
-    expected = len(rules) * len(dates) * replicates
-    if len(objectives) != expected or objectives.duplicated(KEYS).any():
-        raise ValueError(f"objectives: {len(objectives)} rows, expected {expected} unique")
-    values = objectives.drop(columns=KEYS).to_numpy(float)
-    if not np.isfinite(values).all():
-        raise ValueError("a non-finite objective")
+def check_block(tables, rules, dates, replicates):
+    """The content checks of a block (module docstring); raises on the first problem."""
+    def keyset(table):
+        return set(map(tuple, table[KEYS].astype(str).to_numpy()))
+
+    every = {(i, d, str(r)) for i, d, r in product(rules["rule id"], dates, range(replicates))}
+    knees = rules[rules["knee"].astype(bool)]
+    knee_keys = {(i, d, str(r)) for i, d, r in product(knees["rule id"], dates, range(replicates))}
+    gp_knees = set(knees.loc[knees["kind"] == "gp", "rule id"])
+
+    objectives = tables["objectives"]
+    if len(objectives) != len(every) or keyset(objectives) != every:
+        raise ValueError("objectives: not exactly one row per rule, date and replicate")
+    if not np.isfinite(objectives.drop(columns=KEYS).to_numpy(float)).all():
+        raise ValueError("objectives: a non-finite value")
+
+    groups = tables["groups"]
+    if keyset(groups) != every or groups.duplicated(KEYS + evaluate6.GROUP_KEYS).any():
+        raise ValueError("groups: a missing rule, date or replicate, or a repeated group")
+    visitors_per_key = groups.groupby(KEYS)["visitors"].sum()
+    if (visitors_per_key.groupby(level=["date", "replicate"]).nunique() != 1).any():
+        raise ValueError("groups: rules of one date and replicate do not count the same visitors")
+
+    peaks = tables["peaks"]
+    if keyset(peaks) != every or peaks.duplicated(KEYS + ["site"]).any() or \
+            (peaks.groupby(KEYS).size() != SITES).any():
+        raise ValueError("peaks: not every site once per rule, date and replicate")
+
+    if knee_keys:
+        visitors, hourly = tables.get("visitors"), tables.get("hourly")
+        if visitors is None or keyset(visitors) != knee_keys or visitors.duplicated(KEYS + ["visitor"]).any():
+            raise ValueError("visitors: not every knee's visitors once per date and replicate")
+        if not np.isfinite(visitors[VISITOR_VALUES].to_numpy(float)).all():
+            raise ValueError("visitors: a non-finite route part or score")
+        counted = visitors.groupby(KEYS).size()
+        if not counted.equals(visitors_per_key.loc[counted.index]):
+            raise ValueError("visitors: the knee rows are not the visitors counted in the groups")
+        if hourly is None or keyset(hourly) != knee_keys or hourly.duplicated(KEYS + ["site"]).any() or \
+                (hourly.groupby(KEYS).size() != SITES).any():
+            raise ValueError("hourly: not every site once per knee, date and replicate")
+    if gp_knees:
+        decisions = tables.get("decisions")
+        if decisions is None or not set(decisions["rule id"]) <= gp_knees or \
+                decisions.duplicated(KEYS + ["decision"]).any():
+            raise ValueError("decisions: rows of a rule that is not a GP knee, or a repeated decision")
+
+
+def manifest(folder):
+    out = {}
+    for path in sorted(Path(folder).glob("*.csv.gz")):
+        data = path.read_bytes()
+        out[path.name] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    return out
 
 
 def run_block(job):
-    """Compute one block, write it to a temporary folder, read it back, move it into place, mark it done."""
+    """Compute one block, write it to a temporary folder, read it back and check it, move it into place,
+    mark it done with the manifest of its files."""
     folder, rules, dates, replicates, settings, identity = job
     folder = Path(folder)
     rules = pd.DataFrame(rules)
@@ -233,10 +315,18 @@ def run_block(job):
     tables = compute_block(rules, dates, replicates, settings)
     for name, table in tables.items():
         table.to_csv(temporary / f"{name}.csv.gz", index=False)
-    read_back(temporary, tables, rules, dates, replicates)
+    again = {}
+    for name, table in tables.items():
+        again[name] = read_table(temporary / f"{name}.csv.gz")
+        if len(again[name]) != len(table) or list(again[name].columns) != list(table.columns):
+            raise ValueError(f"{name} does not read back as written")
+    check_block(again, rules, dates, replicates)
+    files = manifest(temporary)
+    for name, table in tables.items():
+        files[f"{name}.csv.gz"]["rows"] = len(table)
     shutil.rmtree(folder, ignore_errors=True)
     temporary.rename(folder)
-    done = {**identity, "rules": list(rules["rule id"]), "dates": dates, "replicates": replicates,
+    done = {**identity, "rules": list(rules["rule id"]), "dates": dates, "replicates": replicates, "files": files,
             "seconds": round(time.time() - started, 1),
             "worker peak memory MB": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2 ** 20)}
     write_atomic(folder / "done.json", done)
@@ -249,39 +339,91 @@ def write_atomic(path, data):
     os.replace(temporary, path)
 
 
+def block_files_ok(folder, done, deep=False):
+    """The files listed in done.json are there with their sizes (and, deep, their hashes), and no other."""
+    listed = done.get("files", {})
+    there = {p.name for p in Path(folder).glob("*.csv.gz")}
+    if set(listed) != there:
+        return False
+    for name, info in listed.items():
+        path = Path(folder) / name
+        if path.stat().st_size != info["bytes"]:
+            return False
+        if deep and hashlib.sha256(path.read_bytes()).hexdigest() != info["sha256"]:
+            return False
+    return True
+
+
 # ---------------------------------------------------------------------- #
 # The batch
 # ---------------------------------------------------------------------- #
 
-def identity_of(settings_path, test_path, rules_path, check=True):
-    """With check on (always, for the formal batch): the code and tables must be Step 5's, and every
-    method and run and the tuned rule complete with the Step 5 identity, before anything runs."""
-    here = check_here() if check else None
-    if check:
-        check_complete()
-    return {"step 5": here, "step 6 settings hash": test_settings_hash(load_test_settings(test_path)),
-            "analysis version": analysis_version(), "rule list hash": rule_list_hash(rules_path),
-            "packages": package_versions(), "search settings": str(settings_path)}
+def identity_of(settings, test_path, rules_path, rules, formal=True):
+    """The identity of this start. Formal (always, for the formal batch): the code and tables must be
+    Step 5's, the loaded settings must have the Step 5 settings hash, every Step 5 run must be complete,
+    the rule list must cover what it must, and the pass record must match all of this."""
+    identity = {"mode": "formal" if formal else "not formal",
+                "search settings hash": settings_hash(settings),
+                "step 6 settings hash": test_settings_hash(load_test_settings(test_path)),
+                "analysis version": analysis_version(), "rule list hash": rule_list_hash(rules_path),
+                "packages": package_versions()}
+    if not formal:
+        return identity
+    identity["step 5"] = check_here()
+    if identity["search settings hash"] != STEP5["settings hash"]:
+        raise SystemExit(f"the settings loaded have hash {identity['search settings hash']}, not Step 5's")
+    check_complete()
+    check_rule_list(rules)
+    if not PASS_RECORD.exists():
+        raise SystemExit(f"no {PASS_RECORD}: the reproduction check has not passed")
+    record = json.loads(PASS_RECORD.read_text())
+    keys = ("rule list hash", "analysis version", "search settings hash", "packages", "step 5")
+    wrong = [k for k in keys if record.get(k) != json.loads(json.dumps(identity[k]))]
+    if wrong or Path(rules_path).resolve() != RULE_LIST.resolve():
+        raise SystemExit(f"the reproduction pass record does not match this start: {wrong or 'rule list path'}")
+    return identity
 
 
-def jobs_of(out, rules, dates, data, settings, identity):
-    """The blocks still to do; a block marked done under another identity stops the batch."""
-    jobs, wrong = [], []
+def blocks_of(rules, dates, data, out):
     per = data["dates per block"]
     for group, members in rules.groupby("group", sort=False):
         for start in range(0, len(dates), per):
             chunk = dates[start:start + per]
-            folder = Path(out) / "blocks" / group / chunk[0]
-            mark = folder / "done.json"
-            if mark.exists():
-                done = json.loads(mark.read_text())
-                if {k: done.get(k) for k in identity} != identity or done.get("dates") != chunk:
-                    wrong.append(str(folder))
-                continue
-            jobs.append((str(folder), members.to_dict("list"), chunk, data["replicates"], settings, identity))
+            yield Path(out) / "blocks" / group / chunk[0], members, chunk
+
+
+def jobs_of(out, rules, dates, data, settings, identity):
+    """The blocks still to do; a block marked done under another identity, or with a file missing, extra or
+    of another size, stops the batch."""
+    jobs, wrong = [], []
+    for folder, members, chunk in blocks_of(rules, dates, data, out):
+        mark = folder / "done.json"
+        if mark.exists():
+            done = json.loads(mark.read_text())
+            same = {k: done.get(k) for k in identity} == json.loads(json.dumps(identity)) and done.get("dates") == chunk
+            if not same or not block_files_ok(folder, done):
+                wrong.append(str(folder))
+            continue
+        jobs.append((str(folder), members.to_dict("list"), chunk, data["replicates"], settings, identity))
     if wrong:
-        raise SystemExit("blocks of another identity are there; nothing is run:\n  " + "\n  ".join(wrong[:10]))
+        raise SystemExit("blocks of another identity, or with changed files, are there; nothing is run:\n  "
+                         + "\n  ".join(wrong[:10]))
     return jobs
+
+
+def verify(out, rules, dates, data, identity):
+    """After the batch: every block is done under this identity and every file has its recorded hash."""
+    missing, bad = [], []
+    for folder, _, chunk in blocks_of(rules, dates, data, out):
+        mark = folder / "done.json"
+        if not mark.exists():
+            missing.append(str(folder))
+            continue
+        done = json.loads(mark.read_text())
+        same = {k: done.get(k) for k in identity} == json.loads(json.dumps(identity)) and done.get("dates") == chunk
+        if not same or not block_files_ok(folder, done, deep=True):
+            bad.append(str(folder))
+    return missing, bad
 
 
 def take_lock(out):
@@ -302,20 +444,32 @@ def main(argv=None):
     parser.add_argument("--test-settings", default=str(TEST_SETTINGS))
     parser.add_argument("--rules", default=str(RULE_LIST))
     parser.add_argument("--out", default=str(OUT))
-    parser.add_argument("--no-identity-check", action="store_true",
-                        help="only for runs on pilot rules and validation days, never for the formal batch")
+    parser.add_argument("--verify", action="store_true", help="check every block after the batch; run nothing")
+    parser.add_argument("--not-formal", action="store_true",
+                        help="only validation days, only outside outputs/test/: e.g. the measured run")
     args = parser.parse_args(argv)
     if args.workers < 1:
         raise SystemExit("--workers must be at least 1")
     out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
     settings = load_settings(args.settings)
     data = load_test_settings(args.test_settings)
-    rules = pd.read_csv(args.rules)
+    if args.not_formal:
+        if data["split"] != "validation":
+            raise SystemExit("a run that is not formal may only use validation days")
+        if out.resolve().is_relative_to(OUTPUTS.resolve()):
+            raise SystemExit(f"a run that is not formal may not write under {OUTPUTS}")
+    rules = read_table(args.rules)
     if rules["rule id"].duplicated().any():
         raise SystemExit("the rule list has a repeated rule id")
     dates = dates_of(data)
-    identity = identity_of(args.settings, args.test_settings, args.rules, check=not args.no_identity_check)
+    identity = identity_of(settings, args.test_settings, args.rules, rules, formal=not args.not_formal)
+    if args.verify:
+        missing, bad = verify(out, rules, dates, data, identity)
+        print(f"{len(missing)} blocks missing, {len(bad)} changed or of another identity", flush=True)
+        if missing or bad:
+            raise SystemExit(1)
+        return
+    out.mkdir(parents=True, exist_ok=True)
     task = out / "task.json"
     if task.exists() and json.loads(task.read_text()) != json.loads(json.dumps(identity)):
         raise SystemExit(f"{task} names another identity; nothing is run")

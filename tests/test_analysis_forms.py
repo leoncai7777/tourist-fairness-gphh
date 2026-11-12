@@ -64,12 +64,12 @@ def test_the_shadow_changes_nothing_and_the_tidy_form_always_agrees():
     rule = pilot_rules("GP-adaptive")[0]
     date = validation_dates()[5]
     plain = evaluate(rule, date, 0, DAYS, log=True)
-    shadow = forms.Shadow(rule, forms.tidy(rule))
+    shadow = forms.Shadow(rule, {"tidy": forms.tidy(rule)})
     watched = evaluate(shadow, date, 0, DAYS)
     assert (watched.mean_r, watched.g_hat) == (plain.mean_r, plain.g_hat)
     assert watched.run.fallbacks == plain.run.fallbacks  # the shadow counts nothing
     assert pd.DataFrame(watched.run.decisions).equals(pd.DataFrame(plain.run.decisions))
-    assert len(shadow.agrees) == len(plain.run.decisions) and all(shadow.agrees)
+    assert len(shadow.agrees["tidy"]) == len(plain.run.decisions) and all(shadow.agrees["tidy"])
 
 
 @needs_pilot
@@ -82,10 +82,10 @@ def test_the_display_form_is_rounded_and_only_watched():
             if forms.is_constant(node):
                 assert node.value == float(f"{node.value:.3g}")
     date = validation_dates()[5]
-    shadow = forms.Shadow(rule, shown)
+    shadow = forms.Shadow(rule, {"display": shown})
     watched = evaluate(shadow, date, 0, DAYS)
     assert watched.mean_r == evaluate(rule, date, 0, DAYS).mean_r
-    assert 0 <= np.mean(shadow.agrees) <= 1
+    assert 0 <= np.mean(shadow.agrees["display"]) <= 1
 
 
 def test_c_is_rounded_and_a_constant_that_rounds_to_infinity_has_no_display_form():
@@ -102,3 +102,44 @@ def test_the_readable_text_names_protected_division():
     assert forms.readable(rule) == "GP-adaptive | h1: pdiv(AV, TA) | h2: pdiv(GDAY, 2.0)"
     assert "pdiv" not in to_text(rule)  # the rule's own text is unchanged
     assert math.isfinite(forms.nodes(rule))
+
+
+def engine_stub(site_ids):
+    from types import SimpleNamespace
+    return SimpleNamespace(run=SimpleNamespace(fallbacks={}, decisions=[]), day=SimpleNamespace(site_ids=site_ids),
+                           now=600)
+
+
+@pytest.mark.parametrize("h1, w", [
+    ([1.0, np.nan, 3.0, np.inf], 0.5),
+    ([1.0, 2.0, 2.0, -np.inf], -3.0),          # w below 0 is cut to 0; a tie between two sites
+    ([1e308, 1e308, 0.0, 1.0], np.inf),         # w not finite is set to 0
+    ([2.0, 2.0, 2.0, 2.0], np.nan),             # all tied: the lowest site id wins, not the first position
+    ([1e308, -1e308, 5.0, 5.0], 1e308),         # the priority overflows
+])
+def test_the_quiet_choice_is_choose_sites_choice(h1, w):
+    from features import choose_site
+    site_ids = np.array([49, 42, 300, 61])      # ids not in the order of the positions
+    candidates = np.array([0, 1, 2, 3])
+    vs = np.array([0.5, 2.0, 1.0, 1e-300])
+    with np.errstate(all="ignore"):
+        frozen = choose_site(engine_stub(site_ids), 0, candidates, np.array(h1), w, vs)
+        quiet = forms.quiet_choice(engine_stub(site_ids), candidates, np.array(h1), w, vs)
+    assert quiet == frozen
+
+
+def test_a_shadow_that_fails_leaves_the_counts_as_they_were():
+    class Broken:
+        def parts(self, engine, k, candidates):
+            engine.run.fallbacks["made up"] = 1
+            raise RuntimeError("broken")
+    rule = make_rule("GP-fixed", [tree_from_text("add(AV, TA)", H1_SET), 0.5])
+    shadow = forms.Shadow(rule, {})
+    shadow.others = {"broken": Broken()}
+    shadow.agrees = {"broken": []}
+    shadow.full = type("Full", (), {"choose": lambda self, e, k, c: c[0]})()
+    engine = engine_stub(np.array([1, 2]))
+    engine.run.fallbacks["kept"] = 3
+    with pytest.raises(RuntimeError):
+        shadow.choose(engine, 0, np.array([0, 1]))
+    assert engine.run.fallbacks == {"kept": 3}

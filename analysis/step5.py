@@ -31,6 +31,13 @@ RUNS = range(30)
 PACKAGES = ("numpy", "pandas", "deap", "scipy")
 
 
+def read_table(path, **kwargs):
+    """A saved table read back exactly: pandas' default float parser can change the last bit of a number
+    (about a quarter of random floats move by up to 2.2e-16); round_trip reads every number as written."""
+    import pandas as pd
+    return pd.read_csv(path, float_precision="round_trip", **kwargs)
+
+
 def analysis_version():
     """Hash of every Python file in analysis/."""
     digest = hashlib.sha1()

@@ -62,14 +62,15 @@ def at_least(r, theta):
 
 
 def score(rule, date, replicate, days, beta=0.5, stop_limit=True, knee=False, watch=None):
-    """Every output of one evaluation, as a dict of small tables and numbers. For a GP knee, watch may be
-    its display form: the full rule acts and logs, and at every decision the display form's choice is
-    computed as a shadow (forms.Shadow); the log gets a column saying whether the two agree."""
+    """Every output of one evaluation, as a dict of small tables and numbers. For a GP knee, watch may map
+    names to other forms of it (its tidy and display forms): the full rule acts and logs, and at every
+    decision each form's choice is computed as a shadow (forms.Shadow); the log gets a column "<name> agrees"
+    for each. The decision log is written with card ids and site ids (plan, section 2), not day indices."""
     day, observed = days.get(date)
     if not has_evaluated_visitors(day):
         raise ValueError(f"{date}: no evaluated visitor, so no mean R_v; this day is left out (plan, section 11)")
     shadow = None
-    if watch is not None:
+    if watch:
         if not (knee and isinstance(rule, list)):
             raise ValueError("only a GP knee is watched")
         from forms import Shadow
@@ -118,12 +119,26 @@ def score(rule, date, replicate, days, beta=0.5, stop_limit=True, knee=False, wa
         out["hourly"] = pd.DataFrame(result.crowding, columns=[f"hour {h}" for h in range(24)]).assign(
             site=day.site_ids)
         if isinstance(rule, list):
-            out["decisions"] = pd.DataFrame(result.run.decisions)
+            out["decisions"] = decisions_table(day, result.run.decisions)
             if shadow is not None:
-                if len(shadow.agrees) != len(out["decisions"]):
-                    raise AssertionError("the shadow did not see every decision")
-                out["decisions"]["display agrees"] = shadow.agrees
+                for name, agrees in shadow.agrees.items():
+                    if len(agrees) != len(out["decisions"]):
+                        raise AssertionError("a shadow did not see every decision")
+                    out["decisions"][f"{name} agrees"] = agrees
     return out
+
+
+def decisions_table(day, rows):
+    """The frozen decision log with the day's visitor index replaced by the card id and the site indices j0,
+    jw by site ids (columns "j0 site", "jw site"); "decision" numbers the rows in the order they were made."""
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return pd.DataFrame(columns=["decision", "visitor", "j0 site", "jw site"])
+    table.insert(0, "decision", np.arange(len(table)))
+    table["visitor"] = day.visitors["visitor"].to_numpy()[table["visitor"].to_numpy(int)]
+    table["j0 site"] = day.site_ids[table.pop("j0").to_numpy(int)]
+    table["jw site"] = day.site_ids[table.pop("jw").to_numpy(int)]
+    return table
 
 
 def main_keys(rows):

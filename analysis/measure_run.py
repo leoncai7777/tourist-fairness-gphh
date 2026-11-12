@@ -56,7 +56,7 @@ def pilot_rule_list(out):
 def command(out, folder, workers):
     settings = out / "validation.json"
     return [sys.executable, "-u", str(Path(__file__).with_name("run_test.py")), "--workers", str(workers),
-            "--no-identity-check", "--rules", str(out / "rules.csv"), "--test-settings", str(settings),
+            "--not-formal", "--rules", str(out / "rules.csv"), "--test-settings", str(settings),
             "--out", str(folder)]
 
 
@@ -73,7 +73,7 @@ def contents(folder):
         key = str(path.relative_to(folder))
         if path.name == "done.json":
             d = json.loads(path.read_text())
-            d.pop("seconds"), d.pop("worker peak memory MB")
+            d.pop("seconds"), d.pop("worker peak memory MB"), d.pop("files")  # gzip headers hold a time
             out[key] = json.dumps(d, sort_keys=True)
         else:
             out[key] = gzip.decompress(path.read_bytes())

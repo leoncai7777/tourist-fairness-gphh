@@ -91,3 +91,28 @@ def test_a_day_with_no_evaluated_visitor_is_refused_before_it_is_simulated():
     stub = SimpleNamespace(get=lambda date: (day, None))
     with pytest.raises(ValueError, match="no evaluated visitor"):
         e6.score(gp_rule(), "2022-03-07", 0, stub)
+
+
+def test_the_decision_log_holds_card_ids_and_site_ids(knee_out):
+    day = DAYS.get(DATE)[0]
+    log, visitors = knee_out["decisions"], knee_out["visitors"]
+    assert {"decision", "visitor", "j0 site", "jw site"} <= set(log.columns) and not {"j0", "jw"} & set(log.columns)
+    assert list(log["decision"]) == list(range(len(log)))
+    assert set(log["visitor"]) <= set(visitors["visitor"])  # joins the per-visitor rows by card id
+    assert set(log["j0 site"]) | set(log["jw site"]) <= set(day.site_ids)
+    plain = evaluate(gp_rule(), DATE, 1, DAYS, log=True)
+    raw = pd.DataFrame(plain.run.decisions)
+    ids = day.visitors["visitor"].to_numpy()
+    assert (log["visitor"].to_numpy() == ids[raw["visitor"].to_numpy()]).all()
+    assert (log["jw site"].to_numpy() == day.site_ids[raw["jw"].to_numpy()]).all()
+    assert len(log) == len(raw)
+
+
+def test_watched_forms_add_one_column_each_and_change_nothing():
+    import forms
+    rule = gp_rule()
+    out = e6.score(rule, DATE, 1, DAYS, knee=True,
+                   watch={"tidy": forms.tidy(rule), "display": forms.display(rule)[0]})
+    assert out["decisions"]["tidy agrees"].all()
+    assert out["decisions"]["display agrees"].isin([True, False]).all()
+    assert out["objectives"] == e6.score(rule, DATE, 1, DAYS, knee=True)["objectives"]
