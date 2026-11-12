@@ -1,0 +1,17 @@
+{
+  "comment": "Step 6 further analysis (step6_plan.md, section 12), item 4: same-day availability.",
+  "year": 2019,
+  "split": "test",
+  "replicates": 5,
+  "alphas": [
+    0.0,
+    0.25,
+    0.5,
+    1.0
+  ],
+  "dates per block": 5,
+  "scenario": {
+    "rules": "knees",
+    "same day": true
+  }
+}

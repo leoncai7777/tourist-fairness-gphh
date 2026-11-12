@@ -1,0 +1,17 @@
+{
+  "comment": "Step 6 further analysis (step6_plan.md, section 12), item 2: compliance 50%.",
+  "year": 2019,
+  "split": "test",
+  "replicates": 5,
+  "alphas": [
+    0.0,
+    0.25,
+    0.5,
+    1.0
+  ],
+  "dates per block": 5,
+  "scenario": {
+    "rules": "knees",
+    "compliance": 0.5
+  }
+}

@@ -84,14 +84,89 @@ SITES = 15
 # Settings, days and the rule list
 # ---------------------------------------------------------------------- #
 
+SCENARIO_KEYS = {"rules", "stop limit", "compliance", "peak floor", "same day", "budget"}
+SCENARIO_RULES = ("knees", "hand and control", "diagnostic")
+
+
 def load_test_settings(path=TEST_SETTINGS):
+    """The settings of a test evaluation. A further analysis (plan, section 12) adds a scenario: which rules
+    (the knees; the hand rules and the control; the h2 diagnostic) and what it changes (no stop limit, a
+    compliance level, the peak floor, same-day availability, the uncorrected budget)."""
     data = json.loads(Path(path).read_text())
     required = {"comment", "year", "split", "replicates", "alphas", "dates per block"}
-    if set(data) != required:
-        raise ValueError(f"{path}: needs exactly {sorted(required)}")
+    if not required <= set(data) <= required | {"scenario"}:
+        raise ValueError(f"{path}: needs exactly {sorted(required)}, and may have a scenario")
     if [float(a) for a in data["alphas"]] != list(evaluate6.ALPHAS):
         raise ValueError(f"{path}: the alpha grid is fixed by the plan: {evaluate6.ALPHAS}")
+    scenario = data.get("scenario", {})
+    if not set(scenario) <= SCENARIO_KEYS or ("rules" in scenario and scenario["rules"] not in SCENARIO_RULES):
+        raise ValueError(f"{path}: a scenario may set only {sorted(SCENARIO_KEYS)}; rules one of {SCENARIO_RULES}")
+    if "compliance" in scenario and not 0 < scenario["compliance"] < 1:
+        raise ValueError(f"{path}: compliance is a share between 0 and 1")
+    if scenario.get("peak floor", "median of the candidates") != "median of the candidates":
+        raise ValueError(f"{path}: the peak floor is the median usual peak of the candidate sites (plan, section 12)")
+    if scenario.get("budget", "span") != "span" or scenario.get("stop limit", False) is not False or \
+            scenario.get("same day", True) is not True:
+        raise ValueError(f"{path}: a scenario changes a setting away from the main one only")
     return data
+
+
+def peak_floor():
+    """The common lower bound on the usual peak: the median usual peak of the candidate sites (every site but
+    the low-coverage one, which is never a candidate), from the frozen training table (plan, section 12)."""
+    from preprocess import LOW_COVERAGE
+    sites = read_table(PROCESSED / "sites.csv")
+    return float(np.median(sites.loc[~sites["site"].isin(LOW_COVERAGE), "usual_peak"]))
+
+
+def scenario_settings(settings, data):
+    """The search settings with the scenario's changes."""
+    scenario, out = data.get("scenario", {}), dict(settings)
+    if "stop limit" in scenario:
+        out["stop limit"] = False
+    if "same day" in scenario:
+        out["same day"] = True
+    if "budget" in scenario:
+        out["budget"] = "span"
+    if "peak floor" in scenario:
+        out["peak floor"] = peak_floor()
+    return out
+
+
+def diagnostic_rules(rules, root=FORMAL):
+    """Item 6 of section 12: each GP-adaptive knee with h2 replaced by the constant median of its logged w on
+    the validation days (Step 5's knee decision log). The constant may be 0 and is not bound by the search's
+    constant range; the rule is built directly."""
+    from deap import gp as deap_gp
+    from gp_rule import H2_SET, make_rule
+    rows = []
+    knees = rules[(rules["kind"] == "gp") & (rules["method"] == "GP-adaptive") & rules["knee"].astype(bool)]
+    for _, row in knees.iterrows():
+        log = read_table(run_folder(row["method"], int(row["run"]), root) / "results" / "knee_decisions.csv.gz",
+                         usecols=["w"])
+        constant = float(np.median(log["w"]))
+        full = from_text(row["text"])
+        rule = make_rule("GP-adaptive", [full[0], deap_gp.PrimitiveTree([deap_gp.Terminal(constant, False,
+                                                                                          H2_SET.ret)])])
+        rows.append({"rule id": f"{row['rule id']}_h2_constant", "group": row["group"], "kind": "diagnostic",
+                     "method": "GP-adaptive", "run": row["run"], "text": to_text(rule), "knee": True,
+                     "parent": row["rule id"], "constant": constant})
+    return pd.DataFrame(rows)
+
+
+def rules_of(rules, data):
+    """The rules a scenario runs (plan, section 12); all of them without a scenario."""
+    which = data.get("scenario", {}).get("rules")
+    if which is None:
+        return rules
+    if which == "diagnostic":
+        return diagnostic_rules(rules)
+    hand = rules["kind"].isin(["hand", "control"])
+    if which == "hand and control":
+        return rules[hand]
+    keep = hand | ((rules["kind"] == "gp") & rules["knee"].astype(bool)) | \
+        ((rules["kind"] == "tuned") & rules["validation front"].astype(bool))
+    return rules[keep]
 
 
 def test_settings_hash(data):
@@ -202,7 +277,7 @@ def rule_list_hash(path=RULE_LIST):
 def policy(row):
     if row["kind"] == "gp":
         return from_text(row["text"])
-    if row["kind"] == "display":  # built from the rounded tidy form; its constants may leave the search range
+    if row["kind"] in ("display", "diagnostic"):  # built directly; their constants may leave the search range
         return from_text(row["text"], strict=False)
     if row["kind"] == "tuned":
         return Tuned(float(row["text"]))
@@ -221,11 +296,34 @@ VISITOR_VALUES = ["A", "C", "T", "A observed", "C observed", "T observed"] + \
     [f"R_v (alpha {evaluate6.label(a)})" for a in evaluate6.ALPHAS]
 
 
-def compute_block(rules, dates, replicates, settings):
+COMPLIANCE = 2  # named random stream for who follows (simulator design, section 5; STAYS is 1, SCHEDULE 3)
+
+
+def followers(day, date, replicate, share):
+    """Who follows at a compliance share: one uniform number per visitor index (card id order) from the stream
+    [COMPLIANCE, date, replicate]; an evaluated visitor follows when it is below the share, so the followers at
+    50% are among those at 70%, and they are the same for every rule."""
+    u = np.random.default_rng([COMPLIANCE, pd.Timestamp(date).toordinal(), replicate]).random(len(day.visitors))
+    chosen = day.visitors["evaluated"].to_numpy() & (u < share)
+    return list(day.visitors["visitor"].to_numpy()[chosen])
+
+
+def compute_block(rules, dates, replicates, settings, data=None):
     """Every rule of the block on every date and replicate; the tables of the block. The days are loaded for
     this block only, so a worker's memory does not grow with the dates it has met."""
-    days = Days(budget=settings["budget"], same_day=settings["same day"], peak_floor=settings["peak floor"],
-                test=True)
+    data = data or {}
+    settings = scenario_settings(settings, data)
+    share = data.get("scenario", {}).get("compliance")
+    options = {"budget": settings["budget"], "same_day": settings["same day"], "peak_floor": settings["peak floor"]}
+    days = Days(**options, test=True)
+    by_replicate = {}
+
+    def days_of(date, r):
+        if share is None:
+            return days
+        if (date, r) not in by_replicate:
+            by_replicate[date, r] = Days(**options, follows=followers(days.get(date)[0], date, r, share), test=True)
+        return by_replicate[date, r]
     tables = {name: [] for name in FILES + OBSERVED}
     if (rules["kind"] == "control").any():
         for date in dates:
@@ -241,8 +339,8 @@ def compute_block(rules, dates, replicates, settings):
             watch = {"display": from_text(shown[row["rule id"]], strict=False)}
         for date in dates:
             for r in range(replicates):
-                out = evaluate6.score(rule, date, r, days, beta=settings["beta"], stop_limit=settings["stop limit"],
-                                      knee=bool(row["knee"]), watch=watch)
+                out = evaluate6.score(rule, date, r, days_of(date, r), beta=settings["beta"],
+                                      stop_limit=settings["stop limit"], knee=bool(row["knee"]), watch=watch)
                 tag = {"rule id": row["rule id"], "date": date, "replicate": r}
                 tables["objectives"].append({**tag, **out["objectives"]})
                 for name in FILES[1:]:
@@ -260,7 +358,7 @@ def check_block(tables, rules, dates, replicates):
     every = {(i, d, str(r)) for i, d, r in product(rules["rule id"], dates, range(replicates))}
     knees = rules[rules["knee"].astype(bool)]
     knee_keys = {(i, d, str(r)) for i, d, r in product(knees["rule id"], dates, range(replicates))}
-    gp_knees = set(knees.loc[knees["kind"] == "gp", "rule id"])
+    gp_knees = set(knees.loc[knees["kind"].isin(["gp", "diagnostic"]), "rule id"])
 
     objectives = tables["objectives"]
     if len(objectives) != len(every) or keyset(objectives) != every:
@@ -325,14 +423,14 @@ def manifest(folder):
 def run_block(job):
     """Compute one block, write it to a temporary folder, read it back and check it, move it into place,
     mark it done with the manifest of its files."""
-    folder, rules, dates, replicates, settings, identity = job
+    folder, rules, dates, replicates, settings, identity, data = job
     folder = Path(folder)
     rules = pd.DataFrame(rules)
     temporary = folder.with_name(folder.name + ".partial")
     shutil.rmtree(temporary, ignore_errors=True)
     temporary.mkdir(parents=True)
     started = time.time()
-    tables = compute_block(rules, dates, replicates, settings)
+    tables = compute_block(rules, dates, replicates, settings, data)
     for name, table in tables.items():
         table.to_csv(temporary / f"{name}.csv.gz", index=False)
     again = {}
@@ -425,7 +523,7 @@ def jobs_of(out, rules, dates, data, settings, identity):
             if not same or not block_files_ok(folder, done):
                 wrong.append(str(folder))
             continue
-        jobs.append((str(folder), members.to_dict("list"), chunk, data["replicates"], settings, identity))
+        jobs.append((str(folder), members.to_dict("list"), chunk, data["replicates"], settings, identity, data))
     if wrong:
         raise SystemExit("blocks of another identity, or with changed files, are there; nothing is run:\n  "
                          + "\n  ".join(wrong[:10]))
@@ -484,6 +582,7 @@ def main(argv=None):
         raise SystemExit("the rule list has a repeated rule id")
     dates = dates_of(data)
     identity = identity_of(settings, args.test_settings, args.rules, rules, formal=not args.not_formal)
+    rules = rules_of(rules, data)  # a further analysis runs a subset of the list, or rules built from it
     if args.verify:
         missing, bad = verify(out, rules, dates, data, identity)
         print(f"{len(missing)} blocks missing, {len(bad)} changed or of another identity", flush=True)

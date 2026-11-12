@@ -24,7 +24,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import evaluate6  # noqa: E402
 from run_test import (OBSERVED, SETTINGS_FILE, TEST_SETTINGS, dates_of, identity_of, load_test_settings,  # noqa: E402
-                      verify)
+                      rules_of, verify)
 from step5 import read_table  # noqa: E402
 
 from search import load_settings  # noqa: E402
@@ -111,6 +111,7 @@ def load(out, rules_path, test_settings=TEST_SETTINGS, settings_path=SETTINGS_FI
     data = load_test_settings(test_settings)
     settings = load_settings(settings_path)
     identity = identity_of(settings, test_settings, rules_path, rules, formal=formal)
+    rules = rules_of(rules, data)  # a further analysis ran a subset of the list, or rules built from it
     task = json.loads((out / "task.json").read_text())
     if not formal:  # outputs made before these analysis files were written (development on pilot rules)
         identity["analysis version"] = task.get("analysis version")

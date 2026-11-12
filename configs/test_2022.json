@@ -1,0 +1,8 @@
+{
+  "comment": "Step 6 generality check (step6_plan.md, section 11): the same rules on every 2022 day with evaluated visitors, replicates 0 and 1.",
+  "year": 2022,
+  "split": "all",
+  "replicates": 2,
+  "alphas": [0.0, 0.25, 0.5, 1.0],
+  "dates per block": 5
+}
