@@ -66,7 +66,7 @@ def main(argv=None):
     parser.add_argument("--test-settings", default=str(TEST_SETTINGS))
     parser.add_argument("--not-formal", action="store_true")
     args = parser.parse_args(argv)
-    results = rs.load(args.out, args.rules, args.test_settings, formal=not args.not_formal, deep=False)
+    results = rs.load(args.out, args.rules, args.test_settings, formal=not args.not_formal)
     rules = results.rules
     knees = rules[rules["knee"].astype(bool) & (rules["kind"] != "control")]
     table = time_rules(knees, results.dates[:DAYS], load_settings(SETTINGS_FILE))

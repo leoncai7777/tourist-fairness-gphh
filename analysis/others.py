@@ -8,8 +8,9 @@ Other measures (Step 6 plan, section 9)
     each run's checkpoint (7 monitoring days, replicate 0), scored by its
     hypervolume under the frozen range; per method and generation, the median
     and quartiles. There is no point at generation 0. Figure 6.
-  - Time per run: the generation seconds of the search log summed (a resumed
-    run's run.json holds only its last attempt), and the end of run from run.json.
+  - Time per run: the search and end-of-run seconds of every attempt in run.json
+    (the measured times); beside them the generation seconds of the search log,
+    which leave out monitoring and checkpoints, so they are not the search's cost.
 
 Reads Step 5's checkpoints and run.json (validation information only); no test day.
 """
@@ -25,7 +26,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import results as rs  # noqa: E402
 from rq1 import COLOURS, INK, METHODS, MARKERS, main_range, style  # noqa: E402
-from run_test import OUT, RULE_LIST, SETTINGS_FILE  # noqa: E402
+from run_test import OUT, PASS_RECORD, RULE_LIST, SETTINGS_FILE, rule_list_hash  # noqa: E402
 from step5 import FORMAL, read_table  # noqa: E402
 
 from gp_rule import LABELS, from_text, size  # noqa: E402
@@ -86,8 +87,10 @@ def run_times(root, runs):
         report = json.loads((folder / "run.json").read_text()) if (folder / "run.json").exists() else {}
         attempts = report.get("attempts", [])
         rows.append({"method": method, "run": run, "attempts": len(attempts),
-                     "search minutes (generation log)": sum(e["seconds"] for e in state["log"]) / 60,
-                     "end of run minutes (last attempt)": attempts[-1]["end seconds"] / 60 if attempts else None})
+                     "search minutes (attempts)": sum(a["search seconds"] for a in attempts) / 60 if attempts else None,
+                     "end of run minutes (attempts)": sum(a["end seconds"] for a in attempts) / 60 if attempts else None,
+                     "generation log minutes (training only, not the search's cost)":
+                         sum(e["seconds"] for e in state["log"]) / 60})
     return pd.DataFrame(rows)
 
 
@@ -136,7 +139,12 @@ def main(argv=None):
     parser.add_argument("--out", default=str(OUT))
     parser.add_argument("--rules", default=str(RULE_LIST))
     parser.add_argument("--step5", default=str(FORMAL))
+    parser.add_argument("--not-formal", action="store_true")
     args = parser.parse_args(argv)
+    if not args.not_formal:  # Step 5 results and rule list must be those the reproduction check passed on
+        record = json.loads(PASS_RECORD.read_text()) if PASS_RECORD.exists() else {}
+        if record.get("step 5 results") != str(args.step5) or record.get("rule list hash") != rule_list_hash(args.rules):
+            raise SystemExit("the Step 5 results or the rule list are not those of the reproduction pass record")
     print(run_all(read_table(args.rules), load_settings(SETTINGS_FILE), args.step5, Path(args.out) / "analysis" / "others"))
 
 

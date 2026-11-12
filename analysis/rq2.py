@@ -33,7 +33,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import results as rs  # noqa: E402
-from rq1 import COLOURS, INK, METHODS, MARKERS, main_range, style, validation_hypervolumes  # noqa: E402
+from rq1 import COLOURS, INK, METHODS, MARKERS, check_step5_source, style, validation_hypervolumes  # noqa: E402
 from run_test import OUT, PASS_RECORD, RULE_LIST, SETTINGS_FILE, TEST_SETTINGS  # noqa: E402
 from step5 import FORMAL  # noqa: E402
 
@@ -44,56 +44,70 @@ from search import load_settings  # noqa: E402
 EXAMPLE_POSITION = 15  # the 15th of 30 runs sorted by validation hypervolume, then run number (plan, section 7)
 
 
-def knee_measures(decisions):
-    """One row per knee from its test decisions (NA where a measure is not defined)."""
+def knee_measures(decisions, knee_ids):
+    """One row per knee of the fixed list, whether or not it made a decision: with no decision the shares
+    have no denominator (NA); with no changed decision the changed share is 0 and the measures on changed
+    decisions are NA; nothing is filled with 0 that is not a 0."""
     rows = []
-    for rule_id, d in decisions.groupby("rule id"):
-        changed = d[d["changed"]]
-        rows.append({"rule id": rule_id, "decisions": len(d),
-                     "changed share": d["changed"].mean() if len(d) else None,
-                     "changed share, 2+ candidates": d.loc[d["candidates"] >= 2, "changed"].mean()
-                     if (d["candidates"] >= 2).any() else None,
+    for rule_id in knee_ids:
+        d = decisions[decisions["rule id"] == rule_id]
+        changed = d[d["changed"].astype(bool)]
+        several = d[d["candidates"] >= 2]
+        agrees = d["display agrees"].dropna() if "display agrees" in d else pd.Series(dtype=bool)
+        rows.append({"rule id": rule_id, "decisions": len(d), "changed decisions": len(changed),
+                     "changed share": d["changed"].astype(bool).mean() if len(d) else None,
+                     "changed share, 2+ candidates": several["changed"].astype(bool).mean() if len(several) else None,
                      "VS change when changed": changed["VS change"].mean() if len(changed) else None,
                      "h1 given up when changed (within rule)": changed["h1 given up"].median() if len(changed) else None,
-                     "display agreement (test)": d["display agrees"].mean() if "display agrees" in d and
-                     d["display agrees"].notna().any() else None})
+                     "display agreement (test)": agrees.astype(bool).mean() if len(agrees) else None})
     return pd.DataFrame(rows)
 
 
 def spearman(x, y):
+    """The correlation and, where it is not defined, why."""
     from scipy.stats import spearmanr
     x, y = np.asarray(x, float), np.asarray(y, float)
-    if len(x) < 3 or np.ptp(x) == 0 or np.ptp(y) == 0:
-        return None
-    return float(spearmanr(x, y).statistic)
+    if len(x) < 3:
+        return None, "fewer than 3 decisions"
+    if np.ptp(x) == 0:
+        return None, "w constant"
+    if np.ptp(y) == 0:
+        return None, "state constant"
+    return float(spearmanr(x, y).statistic), ""
 
 
 def weight_and_state(decisions, knees):
-    """GP-adaptive knees: Spearman of the logged w with GDAY and with ARR."""
+    """GP-adaptive knees: Spearman of the logged w with GDAY and with ARR, with the reason where not defined."""
     rows = []
     for rule_id in knees:
         d = decisions[decisions["rule id"] == rule_id]
-        rows.append({"rule id": rule_id, "w vs GDAY": spearman(d["w"], d["GDAY"]),
-                     "w vs ARR": spearman(d["w"], d["ARR"]), "w constant": bool(len(d) and np.ptp(d["w"]) == 0)})
+        g, g_why = spearman(d["w"], d["GDAY"])
+        a, a_why = spearman(d["w"], d["ARR"])
+        rows.append({"rule id": rule_id, "decisions": len(d), "w vs GDAY": g, "w vs GDAY, not defined because": g_why,
+                     "w vs ARR": a, "w vs ARR, not defined because": a_why})
     return pd.DataFrame(rows)
 
 
 def knee_hours(decisions, rules):
-    """Per knee and hour: the changed share, the mean VS change when changed (NA without a change) and the
-    median logged w."""
+    """Per knee and hour with decisions: the changed share, the mean VS change when changed (NA without a
+    change) and the median logged w."""
+    if decisions.empty:
+        return pd.DataFrame(columns=["method", "rule id", "hour", "changed", "w", "vs"])
     d = decisions.merge(rules[["rule id", "method"]], on="rule id")
     d["hour"] = (d["time"] // 60).astype(int)
-    d["vs if changed"] = d["VS change"].where(d["changed"])
+    d["vs if changed"] = d["VS change"].where(d["changed"].astype(bool))
+    d["changed"] = d["changed"].astype(bool)
     return d.groupby(["method", "rule id", "hour"]).agg(
         changed=("changed", "mean"), w=("w", "median"), vs=("vs if changed", "mean")).reset_index()
 
 
 def by_hour(per_knee):
-    """Per method and hour: the median over its knees of the changed share and of the mean VS change when
-    changed; the median over its knees of their median logged w (read for GP-adaptive)."""
+    """Per method and hour: the median over its knees of the changed share, of the mean VS change when
+    changed and of the median logged w (read for GP-adaptive), each with the number of knees it is defined for."""
     return per_knee.groupby(["method", "hour"]).agg(
-        knees=("rule id", "nunique"), changed_share=("changed", "median"), vs_change=("vs", "median"),
-        median_w=("w", "median")).reset_index()
+        changed_share=("changed", "median"), changed_share_knees=("changed", "count"),
+        vs_change=("vs", "median"), vs_change_knees=("vs", "count"),
+        median_w=("w", "median"), median_w_knees=("w", "count")).reset_index()
 
 
 def terminal_counts(rules):
@@ -189,16 +203,16 @@ def run_all(results, step5_root, pass_record, folder):
     per_knee, w, hours = [], [], []
     for group in gp_groups:  # one GP knee per group: its decisions are read a group at a time
         decisions = results.table("decisions", group)
-        per_knee.append(knee_measures(decisions))
+        knees = rules[(rules["group"] == group) & (rules["kind"] == "gp") & rules["knee"].astype(bool)]
+        per_knee.append(knee_measures(decisions, list(knees["rule id"])))
         hours.append(knee_hours(decisions, rules))
-        knees = rules.loc[(rules["group"] == group) & (rules["method"] == "GP-adaptive") & (rules["kind"] == "gp")
-                          & rules["knee"].astype(bool), "rule id"]
-        w.append(weight_and_state(decisions, list(knees)))
+        w.append(weight_and_state(decisions, list(knees.loc[knees["method"] == "GP-adaptive", "rule id"])))
         del decisions
     per_knee = pd.concat(per_knee, ignore_index=True)
     per_knee.to_csv(folder / "knees.csv", index=False)
-    w = pd.concat(w, ignore_index=True) if any(len(x) for x in w) else pd.DataFrame(
-        columns=["rule id", "w vs GDAY", "w vs ARR", "w constant"])
+    w = pd.concat([x for x in w if len(x)], ignore_index=True) if any(len(x) for x in w) else pd.DataFrame(
+        columns=["rule id", "decisions", "w vs GDAY", "w vs GDAY, not defined because", "w vs ARR",
+                 "w vs ARR, not defined because"])
     w.to_csv(folder / "weight_and_state.csv", index=False)
     shown = display_measures(results, pass_record)
     shown.to_csv(folder / "display_forms.csv", index=False)
@@ -207,10 +221,12 @@ def run_all(results, step5_root, pass_record, folder):
                        "display agreement (test)", "display agreement (validation)", "display - full, mean R_v",
                        "display - full, G_hat", "tidy nodes"], rules)
     table.to_csv(folder / "table4.csv", index=False)
-    correlations = {"knees": len(w), "w vs GDAY": rs.quartiles([v for v in w["w vs GDAY"] if pd.notna(v)]),
-                    "w vs ARR": rs.quartiles([v for v in w["w vs ARR"] if pd.notna(v)]),
-                    "positive w vs GDAY": int((w["w vs GDAY"] > 0).sum()),
-                    "positive w vs ARR": int((w["w vs ARR"] > 0).sum()), "w constant": int(w["w constant"].sum())}
+    correlations = {"knees": len(w)}
+    for state in ("GDAY", "ARR"):
+        values = [v for v in w[f"w vs {state}"] if pd.notna(v)]
+        reasons = w[f"w vs {state}, not defined because"]
+        correlations[f"w vs {state}"] = {**rs.quartiles(values), "positive": sum(v > 0 for v in values),
+                                         "not defined": {r: int((reasons == r).sum()) for r in set(reasons) if r}}
     (folder / "weight_and_state_summary.json").write_text(json.dumps(correlations, indent=1))
     terminal_counts(rules).to_csv(folder / "terminals.csv", index=False)
     runs = rules[rules["kind"] == "gp"].drop_duplicates(["method", "run"])
@@ -231,6 +247,7 @@ def main(argv=None):
     parser.add_argument("--not-formal", action="store_true")
     args = parser.parse_args(argv)
     results = rs.load(args.out, args.rules, args.test_settings, formal=not args.not_formal)
+    check_step5_source(results, args.step5)
     record = json.loads(PASS_RECORD.read_text()) if PASS_RECORD.exists() and not args.not_formal else None
     print(run_all(results, args.step5, record, Path(args.out) / "analysis" / "rq2"))
 

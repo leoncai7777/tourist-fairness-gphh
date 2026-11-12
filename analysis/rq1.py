@@ -143,6 +143,26 @@ def dominated_counts(results, alpha, value_range):
     return pd.DataFrame(rows)
 
 
+def ranking_of(medians):
+    """Methods by median hypervolume, best first; equal medians are shown as a tie ("="), not ordered."""
+    present = sorted((v, m) for m, v in medians.items() if v is not None)[::-1]
+    out = ""
+    for i, (v, m) in enumerate(present):
+        out += m if i == 0 else (" = " if v == present[i - 1][0] else " > ") + m
+    return out
+
+
+def is_main_test(data):
+    """The 2019 test days without a scenario: the only batch whose comparison is tested (plan, sections 6, 11)."""
+    return data["year"] == 2019 and "scenario" not in data
+
+
+def check_step5_source(results, step5_root):
+    """For the formal outputs, the Step 5 results read here must be those the reproduction check passed on."""
+    if results.identity.get("mode") == "formal" and str(step5_root) != results.identity.get("step 5 results"):
+        raise SystemExit(f"--step5 {step5_root} is not the Step 5 results of the pass record")
+
+
 def table3(results, settings):
     """Ranking and median paired differences under other ranges and other alphas; no tests."""
     settings_list = [("main range, alpha 0.25", rs.MAIN, main_range(settings)),
@@ -152,9 +172,9 @@ def table3(results, settings):
     for name, alpha, value_range in settings_list:
         fronts = run_fronts(results, alpha, value_range)
         medians = {m: rs.quartiles(fronts.loc[fronts["method"] == m, "hypervolume"])["median"] for m in METHODS}
-        ranking = " > ".join(sorted((m for m in METHODS if medians[m] is not None), key=lambda m: -medians[m]))
-        row = {"setting": name, "ranking by median HV": ranking,
-               "behind the reference": int(fronts["behind the reference"].sum())}
+        row = {"setting": name, "ranking by median HV": ranking_of(medians),
+               "behind the reference": int(fronts["behind the reference"].sum()),
+               **{f"{m} median HV": medians[m] for m in METHODS}}
         for a, b in PAIRS:
             _, d = stats.paired_differences(by_run(fronts, a), by_run(fronts, b))
             iv = stats.median_interval(d)
@@ -248,7 +268,8 @@ def run_all(results, settings, step5_root, folder):
     validation = validation_hypervolumes(step5_root, list(zip(gp["method"], gp["run"])))
     fronts.to_csv(folder / "test_fronts.csv", index=False)
     table1(fronts, validation).to_csv(folder / "table1.csv", index=False)
-    table2(fronts).to_csv(folder / "table2.csv", index=False)
+    if is_main_test(results.data):  # other years and scenarios are checks of transfer: no test (plan, section 11)
+        table2(fronts).to_csv(folder / "table2.csv", index=False)
     dominated_counts(results, rs.MAIN, main_range(settings)).to_csv(folder / "hand_rules_dominated.csv", index=False)
     table3(results, settings).to_csv(folder / "table3.csv", index=False)
     figure1(fronts, folder / "figure1.png")
@@ -265,6 +286,7 @@ def main(argv=None):
     parser.add_argument("--not-formal", action="store_true")
     args = parser.parse_args(argv)
     results = rs.load(args.out, args.rules, args.test_settings, formal=not args.not_formal)
+    check_step5_source(results, args.step5)
     print(run_all(results, load_settings(SETTINGS_FILE), args.step5, Path(args.out) / "analysis" / "rq1"))
 
 

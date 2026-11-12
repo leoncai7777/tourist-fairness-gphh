@@ -270,6 +270,16 @@ def check_rule_list(rules, methods=GP_METHODS, runs=RUNS):
         raise SystemExit("the rule list does not cover what it must: " + "; ".join(problems))
 
 
+def derived_identity(rules):
+    """Rules built at the start rather than read from the list (the h2 diagnostic): their texts and constants
+    are part of the identity, so a change in the Step 5 logs they come from cannot pass unseen."""
+    built = rules[rules["kind"] == "diagnostic"]
+    if built.empty:
+        return {}
+    text = built[["rule id", "parent", "text"]].to_csv(index=False)
+    return {"derived rules hash": hashlib.sha256(text.encode()).hexdigest()[:12]}
+
+
 def rule_list_hash(path=RULE_LIST):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
 
@@ -292,7 +302,8 @@ def policy(row):
 
 FILES = ("objectives", "groups", "peaks", "visitors", "hourly", "decisions")
 OBSERVED = ("observed", "observed_peaks", "observed_hourly")  # with the baselines: once per date
-VISITOR_VALUES = ["A", "C", "T", "A observed", "C observed", "T observed"] + \
+VISITOR_VALUES = ["A", "C", "T", "A observed", "C observed", "T observed", "change A", "change C", "change T",
+                  "stops", "observed stops"] + \
     [f"R_v (alpha {evaluate6.label(a)})" for a in evaluate6.ALPHAS]
 
 
@@ -376,9 +387,15 @@ def check_block(tables, rules, dates, replicates):
     if not np.isfinite(groups.drop(columns=KEYS).to_numpy(float)).all():
         raise ValueError("groups: a non-finite value")
 
+    site_ids = set(read_table(PROCESSED / "sites.csv")["site"])
+    hours = [f"hour {h}" for h in range(24)]
+
+    def every_site(t, keys):
+        return t.duplicated(keys + ["site"]).any() or (t.groupby(keys).size() != SITES).any() or \
+            set(t["site"]) != site_ids
+
     peaks = tables["peaks"]
-    if keyset(peaks) != every or peaks.duplicated(KEYS + ["site"]).any() or \
-            (peaks.groupby(KEYS).size() != SITES).any():
+    if keyset(peaks) != every or every_site(peaks, KEYS):
         raise ValueError("peaks: not every site once per rule, date and replicate")
     if not np.isfinite(peaks[["peak C", "hour"]].to_numpy(float)).all():
         raise ValueError("peaks: a non-finite value")
@@ -389,9 +406,11 @@ def check_block(tables, rules, dates, replicates):
             raise ValueError("observed: not one finite G_hat per date")
         for name in ("observed_peaks", "observed_hourly"):
             t = tables.get(name)
-            if t is None or set(t["date"]) != set(dates) or t.duplicated(["date", "site"]).any() or \
-                    (t.groupby("date").size() != SITES).any():
+            if t is None or set(t["date"]) != set(dates) or every_site(t, ["date"]):
                 raise ValueError(f"{name}: not every site once per date")
+        if not np.isfinite(tables["observed_hourly"][hours].to_numpy(float)).all() or \
+                not np.isfinite(tables["observed_peaks"][["peak C", "hour"]].to_numpy(float)).all():
+            raise ValueError("observed: a non-finite crowding value")
 
     if knee_keys:
         visitors, hourly = tables.get("visitors"), tables.get("hourly")
@@ -402,14 +421,29 @@ def check_block(tables, rules, dates, replicates):
         counted = visitors.groupby(KEYS).size()
         if not counted.equals(visitors_per_key.loc[counted.index]):
             raise ValueError("visitors: the knee rows are not the visitors counted in the groups")
-        if hourly is None or keyset(hourly) != knee_keys or hourly.duplicated(KEYS + ["site"]).any() or \
-                (hourly.groupby(KEYS).size() != SITES).any():
+        if hourly is None or keyset(hourly) != knee_keys or every_site(hourly, KEYS):
             raise ValueError("hourly: not every site once per knee, date and replicate")
-    if gp_knees:
+        if not np.isfinite(hourly[hours].to_numpy(float)).all():
+            raise ValueError("hourly: a non-finite crowding value")
+    if gp_knees:  # a GP knee may make no decision on a day: an empty log is legal, a missing one is not
         decisions = tables.get("decisions")
-        if decisions is None or not set(decisions["rule id"]) <= gp_knees or \
-                decisions.duplicated(KEYS + ["decision"]).any():
+        needed = ["decision", "visitor", "time", "candidates", "changed", "VS change", "h1 given up", "w",
+                  "j0 site", "jw site"]
+        if decisions is None or not set(needed) <= set(decisions.columns):
+            raise ValueError("decisions: the log or one of its fields is missing")
+        if not set(decisions["rule id"]) <= gp_knees or decisions.duplicated(KEYS + ["decision"]).any():
             raise ValueError("decisions: rows of a rule that is not a GP knee, or a repeated decision")
+        if len(decisions):
+            if not keyset(decisions) <= knee_keys:
+                raise ValueError("decisions: a date or replicate outside the block")
+            known = set(map(tuple, visitors[KEYS + ["visitor"]].astype(str).to_numpy()))
+            if not set(map(tuple, decisions[KEYS + ["visitor"]].astype(str).to_numpy())) <= known:
+                raise ValueError("decisions: a visitor who is not among the knee's evaluated visitors")
+            if not (set(decisions["j0 site"]) | set(decisions["jw site"])) <= site_ids:
+                raise ValueError("decisions: a site id that is not a site")
+            values = decisions[["time", "candidates", "VS change", "h1 given up", "w"]].to_numpy(float)
+            if not np.isfinite(values).all() or not decisions["changed"].isin([True, False]).all():
+                raise ValueError("decisions: a non-finite value or a changed flag that is not true or false")
 
 
 def manifest(folder):
@@ -583,6 +617,7 @@ def main(argv=None):
     dates = dates_of(data)
     identity = identity_of(settings, args.test_settings, args.rules, rules, formal=not args.not_formal)
     rules = rules_of(rules, data)  # a further analysis runs a subset of the list, or rules built from it
+    identity.update(derived_identity(rules))
     if args.verify:
         missing, bad = verify(out, rules, dates, data, identity)
         print(f"{len(missing)} blocks missing, {len(bad)} changed or of another identity", flush=True)

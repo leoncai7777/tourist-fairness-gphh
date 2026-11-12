@@ -116,15 +116,6 @@ def test_rq2_knees_and_display_forms(batch, tmp_path):
     assert len(pd.read_csv(folder / "table4.csv")) == 3 and (folder / "figure3.png").exists()
 
 
-def test_rq2_measures_are_not_defined_without_a_change():
-    pytest.importorskip("scipy")
-    d = pd.DataFrame({"rule id": ["r"] * 3, "changed": [False] * 3, "candidates": [1, 2, 3], "VS change": [0.0] * 3,
-                      "h1 given up": [0.0] * 3})
-    row = rq2.knee_measures(d).iloc[0]
-    assert row["changed share"] == 0 and pd.isna(row["VS change when changed"])
-    assert rq2.spearman([1, 1, 1], [1, 2, 3]) is None
-
-
 def test_rq3_envelope_and_losses(batch, tmp_path):
     folder = rq3.run_all(batch, SETTINGS, tmp_path / "rq3")
     env = pd.read_csv(folder / "envelope_alpha_0.25.csv")

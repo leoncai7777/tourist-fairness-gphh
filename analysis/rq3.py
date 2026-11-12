@@ -70,7 +70,7 @@ def envelope(results, alpha=rs.MAIN):
         for g in LEVELS:
             eligible = [i for i in ids if means.loc[i, "G_hat"] <= g]
             if not eligible:
-                rows.append({"method": method, "run": run, "level": g, "reached": False})
+                rows.append({"method": method, "run": run, "level": g, "reached": False})  # never imputed
                 continue
             best = max(means.loc[i, r] for i in eligible)
             chosen = next(i for i in eligible if means.loc[i, r] == best)
@@ -80,14 +80,20 @@ def envelope(results, alpha=rs.MAIN):
     return pd.DataFrame(rows)
 
 
+ENVELOPE_COLUMNS = ["method", "run", "level", "reached", "rule id", "best mean R_v", "G_hat", "completion"]
+
+
 def envelope_summary(env):
+    env = env.reindex(columns=ENVELOPE_COLUMNS)  # the same columns even when no run reaches any level
     rows = []
     for (method, g), e in env.groupby(["method", "level"], sort=False):
         reached = e[e["reached"]]
-        q, c = rs.quartiles(reached["best mean R_v"]), rs.quartiles(reached.get("completion", []))
+        q, c = rs.quartiles(reached["best mean R_v"]), rs.quartiles(reached["completion"])
         rows.append({"method": method, "level": g, "runs": len(e), "runs reaching it": len(reached),
                      "best mean R_v median": q["median"], "q1": q["q1"], "q3": q["q3"],
-                     "completion of chosen rules, median": c["median"]})
+                     "completion of chosen rules, median": c["median"],
+                     f"chosen rules with completion below {COMPLETION_MARK}": int((reached["completion"] <
+                                                                                   COMPLETION_MARK).sum())})
     return pd.DataFrame(rows)
 
 
@@ -156,7 +162,7 @@ def table5(knees):
         row = {"method": method, "dimension": dimension, "group": group, "knees": len(k)}
         for c in measures:
             q = rs.quartiles([x for x in k[c] if pd.notna(x)])
-            row.update({c: q["median"], f"{c} q1": q["q1"], f"{c} q3": q["q3"]})
+            row.update({c: q["median"], f"{c} q1": q["q1"], f"{c} q3": q["q3"], f"{c} n": q["n"]})
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -180,7 +186,21 @@ def peaks(results):
     return pd.DataFrame(rows).merge(rules[["rule id", "method"]], on="rule id")
 
 
-def figure4(summary, path):
+def end_reasons(knees):
+    """Per method: completion, the share ending early and the share of visitors by end reason over its knees
+    (median), with the knees marked below the completion mark."""
+    reasons = [c for c in knees.columns if c.startswith("end: ")]
+    rows = []
+    for method, k in knees.groupby("method", sort=False):
+        row = {"method": method, "knees": len(k), f"knees with completion below {COMPLETION_MARK} (mark)":
+               int(k["completion below 0.95 (mark)"].sum())}
+        for c in ["completion", "ended early"] + reasons:
+            row[c] = rs.quartiles(k[c])["median"]
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def figure4(summary, path, hand=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -190,8 +210,12 @@ def figure4(summary, path):
         s = summary[(summary["method"] == method) & summary["best mean R_v median"].notna()]
         if s.empty:
             continue
-        ax.plot(s["level"], s["best mean R_v median"], color=COLOURS[method], marker=MARKERS[method],
-                markersize=4, linewidth=1.8, label=method)
+        ax.plot(s["level"], s["best mean R_v median"], color=COLOURS[method], linewidth=1.8, label=method)
+        low = s[f"chosen rules with completion below {COMPLETION_MARK}"] > 0
+        ax.scatter(s.loc[~low, "level"], s.loc[~low, "best mean R_v median"], color=COLOURS[method],
+                   marker=MARKERS[method], s=22, zorder=3)
+        ax.scatter(s.loc[low, "level"], s.loc[low, "best mean R_v median"], facecolor="white",
+                   edgecolor=COLOURS[method], marker=MARKERS[method], s=28, zorder=3)
         ax.fill_between(s["level"], s["q1"], s["q3"], color=COLOURS[method], alpha=0.15, linewidth=0)
         for _, row in s.iterrows():
             if row["runs reaching it"] < row["runs"]:
@@ -200,6 +224,15 @@ def figure4(summary, path):
     t = summary[(summary["method"] == "tuned") & summary["best mean R_v median"].notna()]
     ax.plot(t["level"], t["best mean R_v median"], color=COLOURS["tuned"], linestyle="--", linewidth=1.8,
             label="tuned weighted rule")
+    if hand is not None:
+        for _, row in hand.iterrows():
+            filled = row["completion"] >= COMPLETION_MARK
+            ax.scatter([row["G_hat"]], [row["mean R_v"]], s=55, marker="o", zorder=4, linewidth=1.3,
+                       facecolor=INK if filled else "white", edgecolor=INK)
+            ax.annotate(row["rule"], (row["G_hat"], row["mean R_v"]), xytext=(6, -10), textcoords="offset points",
+                        fontsize=8, color=INK)
+    ax.scatter([], [], facecolor="white", edgecolor=INK, s=28,
+               label=f"hollow: completion below {COMPLETION_MARK} (hand rules: their own; levels: any chosen rule)")
     ax.set_xlabel("level g: test G_hat at most g", color=INK)
     ax.set_ylabel("best mean R_v among the run's rules", color=INK)
     ax.set_title("Test envelope of the fixed rule sets (median and quartiles over runs; n/30 where not all reach g)",
@@ -242,18 +275,22 @@ def run_all(results, settings, folder):
         summary = envelope_summary(env)
         summary.to_csv(folder / f"envelope_summary_alpha_{a:g}.csv", index=False)
         if a == rs.MAIN:
-            figure4(summary, folder / "figure4.png")
+            means, done = results.rule_means(), results.completion()
+            h = results.rules[results.rules["kind"].isin(["hand", "control"])]
+            hand = pd.DataFrame({"rule": h["text"].to_numpy(), "G_hat": means.loc[h["rule id"], "G_hat"].to_numpy(),
+                                 "mean R_v": means.loc[h["rule id"], rs.r_column()].to_numpy(),
+                                 "completion": done.loc[h["rule id"], "completion"].to_numpy()})
+            figure4(summary, folder / "figure4.png", hand)
     knees = knee_tables(results, settings["beta"])
     knees.to_csv(folder / "knees.csv", index=False)
     table5(knees).to_csv(folder / "table5.csv", index=False)
     means, done = results.rule_means(), results.completion()
     k = results.rules[results.rules["knee"].astype(bool)][["rule id", "method", "kind"]]
-    k = k.assign(G_hat=means.loc[k["rule id"], "G_hat"].to_numpy(),
-                 completion=done.loc[k["rule id"], "completion"].to_numpy(),
-                 **{"ended early": done.loc[k["rule id"], "ended early"].to_numpy(),
-                    "stops lost": done.loc[k["rule id"], "stops lost"].to_numpy()})
+    k = pd.concat([k.reset_index(drop=True), done.loc[k["rule id"]].reset_index(drop=True)], axis=1)
+    k.insert(3, "G_hat", means.loc[k["rule id"], "G_hat"].to_numpy())
     k["completion below 0.95 (mark)"] = k["completion"] < COMPLETION_MARK
     k.to_csv(folder / "knee_completion.csv", index=False)
+    end_reasons(k).to_csv(folder / "end_reasons.csv", index=False)
     per_site = peaks(results)
     per_site.to_csv(folder / "peaks.csv", index=False)
     names = dict(zip(*pd.read_csv(PROCESSED / "sites.csv")[["site", "name"]].T.values))

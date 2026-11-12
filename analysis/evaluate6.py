@@ -143,9 +143,11 @@ def observed(day, replay):
 def decisions_table(day, rows):
     """The frozen decision log with the day's visitor index replaced by the card id and the site indices j0,
     jw by site ids (columns "j0 site", "jw site"); "decision" numbers the rows in the order they were made."""
+    from gp_rule import H2_TERMINALS
     table = pd.DataFrame(rows)
-    if table.empty:
-        return pd.DataFrame(columns=["decision", "visitor", "j0 site", "jw site"])
+    if table.empty:  # no decision that day: an empty log with every field
+        return pd.DataFrame(columns=["decision", "visitor", "time", "candidates", "changed", "VS change", "h1 given up",
+                                     "w", *H2_TERMINALS, "j0 site", "jw site"])
     table.insert(0, "decision", np.arange(len(table)))
     table["visitor"] = day.visitors["visitor"].to_numpy()[table["visitor"].to_numpy(int)]
     table["j0 site"] = day.site_ids[table.pop("j0").to_numpy(int)]

@@ -23,8 +23,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import evaluate6  # noqa: E402
-from run_test import (OBSERVED, SETTINGS_FILE, TEST_SETTINGS, dates_of, identity_of, load_test_settings,  # noqa: E402
-                      rules_of, verify)
+from run_test import (OBSERVED, SETTINGS_FILE, TEST_SETTINGS, blocks_of, dates_of, derived_identity,  # noqa: E402
+                      identity_of, load_test_settings, rules_of, verify)
 from step5 import read_table  # noqa: E402
 
 from search import load_settings  # noqa: E402
@@ -43,9 +43,17 @@ class Results:
     def __init__(self, out, rules, dates, data, identity):
         self.out, self.rules, self.dates, self.data, self.identity = Path(out), rules, dates, data, identity
         self._tables = {}
+        # the blocks the batch must have, and only those: nothing else in the folder is ever read
+        self.blocks = {group: [] for group in dict.fromkeys(rules["group"])}
+        for folder, members, _ in blocks_of(rules, dates, data, out):
+            self.blocks[members["group"].iloc[0]].append(Path(folder))
 
     def files(self, name, group="*"):
-        return sorted(self.out.glob(f"blocks/{group}/*/{name}.csv.gz"))
+        """The files of one kind in the checked blocks (of one group, or of every group); a kind that a block
+        does not write (the knee tables of a group without knees) is simply absent."""
+        groups = self.blocks if group == "*" else {group: self.blocks[group]}
+        return [f / f"{name}.csv.gz" for folders in groups.values() for f in folders
+                if (f / f"{name}.csv.gz").exists()]
 
     def table(self, name, group="*"):
         """One kind of table over the blocks of one group (or every group, for the small tables: objectives,
@@ -78,7 +86,7 @@ class Results:
 
     def rule_means(self):
         """Each rule's test mean of every objective, indexed by rule id."""
-        if "means" not in self._tables:
+        if "means" not in self._tables:  # computed once and kept
             values = [r_column(a) for a in ALPHAS] + ["G_hat"]
             objectives = self.table("objectives")
             per_rule = objectives.groupby("rule id").size()
@@ -90,11 +98,19 @@ class Results:
 
     def completion(self):
         """Each rule's visit completion (stops on the new routes over stops on the observed ones), the share
-        of visitors ending early and the stops lost, pooled over every test day and replicate."""
-        s = self.sums("groups", "rule id", ["visitors", "stops", "observed stops", "ended early"])
-        return pd.DataFrame({"completion": s["stops"] / s["observed stops"],
-                             "ended early": s["ended early"] / s["visitors"],
-                             "stops lost": s["observed stops"] - s["stops"]})
+        of visitors ending early, the stops lost and the share of visitors by end reason, pooled over every
+        test day and replicate. Computed once and kept."""
+        if "completion" not in self._tables:
+            from evaluate import END_REASONS
+            reasons = [f"end: {r}" for r in END_REASONS]
+            s = self.sums("groups", "rule id", ["visitors", "stops", "observed stops", "ended early"] + reasons)
+            out = pd.DataFrame({"completion": s["stops"] / s["observed stops"],
+                                "ended early": s["ended early"] / s["visitors"],
+                                "stops lost": s["observed stops"] - s["stops"]})
+            for r in reasons:
+                out[r] = s[r] / s["visitors"]
+            self._tables["completion"] = out
+        return self._tables["completion"]
 
     def observed(self):
         """The observed days: one G_hat per date."""
@@ -104,21 +120,25 @@ class Results:
         return seen
 
 
-def load(out, rules_path, test_settings=TEST_SETTINGS, settings_path=SETTINGS_FILE, formal=True, deep=True):
-    """The outputs in out, after checking them as a whole (module docstring)."""
+def load(out, rules_path, test_settings=TEST_SETTINGS, settings_path=SETTINGS_FILE, formal=True):
+    """The outputs in out, after checking them as a whole (module docstring): never while a launcher may still
+    be running, never without every block's hashes."""
     out = Path(out)
+    if (out / "launcher.lock").exists():
+        raise SystemExit(f"{out / 'launcher.lock'} is there: the batch may still be running; nothing is read")
     rules = read_table(rules_path)
     data = load_test_settings(test_settings)
     settings = load_settings(settings_path)
     identity = identity_of(settings, test_settings, rules_path, rules, formal=formal)
     rules = rules_of(rules, data)  # a further analysis ran a subset of the list, or rules built from it
+    identity.update(derived_identity(rules))
     task = json.loads((out / "task.json").read_text())
     if not formal:  # outputs made before these analysis files were written (development on pilot rules)
         identity["analysis version"] = task.get("analysis version")
     if task != json.loads(json.dumps(identity)):
         raise SystemExit(f"{out / 'task.json'} is not the identity of the code, settings and rule list here")
     dates = dates_of(data)
-    missing, bad = verify(out, rules, dates, data, task) if deep else ([], [])
+    missing, bad = verify(out, rules, dates, data, task)
     if missing or bad:
         raise SystemExit(f"{len(missing)} blocks missing, {len(bad)} changed or of another identity")
     return Results(out, rules, dates, data, identity)

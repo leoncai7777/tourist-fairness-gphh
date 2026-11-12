@@ -29,7 +29,7 @@ MEASURES = ["mean R_v", "G_hat", "completion"]
 def knee_values(results):
     """mean R_v (main alpha), G_hat and completion of every rule of the outputs, with its method and kind."""
     means, done = results.rule_means(), results.completion()
-    t = results.rules[["rule id", "method", "kind"]].set_index("rule id")
+    t = results.rules[["rule id", "method", "kind", "knee"]].set_index("rule id")
     t["mean R_v"] = means[rs.r_column()]
     t["G_hat"] = means["G_hat"]
     t["completion"] = done["completion"]
@@ -44,8 +44,23 @@ def followers_split(results):
     return (s["sum R_v"] / s["visitors"]).unstack("follows").rename(columns={True: "followers", False: "non-followers"})
 
 
+def main_rule(scenario, main):
+    """For each rule of the scenario, the rule it is compared with under the main setting: itself, or for an
+    h2-diagnostic rule its GP-adaptive knee. A rule without its match in the main outputs is an error."""
+    match = pd.Series(scenario.index, index=scenario.index)
+    if "parent" in scenario:
+        built = scenario["kind"] == "diagnostic"
+        match[built] = scenario.loc[built, "parent"]
+    missing = sorted(set(match) - set(main.index))
+    if missing:
+        raise SystemExit(f"rules without their match in the main outputs: {missing[:5]}")
+    return match
+
+
 def summary(scenario, main):
-    """Per method (GP knees) the median and quartiles; per baseline its value; each beside the main setting."""
+    """Per method (GP knees, or the h2-diagnostic rules) the median and quartiles; per baseline its value, the
+    tuned rule's validation knee marked; each beside the same number under the main setting."""
+    match = main_rule(scenario, main)
     rows = []
     gp = scenario[scenario["kind"].isin(["gp", "diagnostic"])]
     for method in METHODS:
@@ -54,13 +69,15 @@ def summary(scenario, main):
             continue
         row = {"rules": method, "knees": len(ids)}
         for m in MEASURES:
-            q, base = rs.quartiles(scenario.loc[ids, m]), rs.quartiles(main.loc[ids.intersection(main.index), m])
-            row.update({f"{m} median": q["median"], f"{m} q1": q["q1"], f"{m} q3": q["q3"], f"{m} main median": base["median"]})
+            q, base = rs.quartiles(scenario.loc[ids, m]), rs.quartiles(main.loc[match[ids], m])
+            row.update({f"{m} median": q["median"], f"{m} q1": q["q1"], f"{m} q3": q["q3"], f"{m} n": q["n"],
+                        f"{m} main median": base["median"]})
         rows.append(row)
     for rule_id, r in scenario[~scenario["kind"].isin(["gp", "diagnostic"])].iterrows():
-        row = {"rules": rule_id, "knees": 1}
+        label = f"{rule_id} (validation knee)" if r["kind"] == "tuned" and bool(r["knee"]) else rule_id
+        row = {"rules": label, "knees": 1}
         for m in MEASURES:
-            row.update({f"{m} median": r[m], f"{m} main median": main.loc[rule_id, m] if rule_id in main.index else None})
+            row.update({f"{m} median": r[m], f"{m} main median": main.loc[match[rule_id], m]})
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -82,12 +99,12 @@ def main(argv=None):
     parser.add_argument("--not-formal", action="store_true")
     args = parser.parse_args(argv)
     formal = not args.not_formal
-    scenario = knee_values(rs.load(args.out, args.rules, args.scenario, formal=formal))
-    main_values = knee_values(rs.load(args.main_out, args.rules, args.main_settings, formal=formal, deep=False))
+    results = rs.load(args.out, args.rules, args.scenario, formal=formal)
+    scenario = knee_values(results)
+    main_values = knee_values(rs.load(args.main_out, args.rules, args.main_settings, formal=formal))
     folder = Path(args.out) / "analysis"
     folder.mkdir(parents=True, exist_ok=True)
     summary(scenario, main_values).to_csv(folder / "summary.csv", index=False)
-    results = rs.load(args.out, args.rules, args.scenario, formal=formal, deep=False)
     if "compliance" in results.data.get("scenario", {}):
         followers_split(results).to_csv(folder / "followers.csv")
     if (scenario["kind"] == "diagnostic").any():
