@@ -107,6 +107,7 @@ def test_rq1_fronts_and_tables(batch, tmp_path):
 
 
 def test_rq2_knees_and_display_forms(batch, tmp_path):
+    pytest.importorskip("scipy")  # the analysis runs in gphh6, which has SciPy
     folder = rq2.run_all(batch, PILOT, None, tmp_path / "rq2")
     knees = pd.read_csv(folder / "knees.csv")
     assert len(knees) == 3 and knees["changed share"].between(0, 1).all()
@@ -116,6 +117,7 @@ def test_rq2_knees_and_display_forms(batch, tmp_path):
 
 
 def test_rq2_measures_are_not_defined_without_a_change():
+    pytest.importorskip("scipy")
     d = pd.DataFrame({"rule id": ["r"] * 3, "changed": [False] * 3, "candidates": [1, 2, 3], "VS change": [0.0] * 3,
                       "h1 given up": [0.0] * 3})
     row = rq2.knee_measures(d).iloc[0]
