@@ -234,3 +234,6 @@ outputs/search/pilot/*/*/
 
 # Formal runs: checkpoints and per-run outputs stay local (large); the records written from them are kept
 outputs/search/formal/
+
+# Step 6 test evaluation: blocks, rule list and pass record stay local (large; per-visitor rows); records written from them are kept
+outputs/test/
