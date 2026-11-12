@@ -216,6 +216,7 @@ def policy(row):
 # ---------------------------------------------------------------------- #
 
 FILES = ("objectives", "groups", "peaks", "visitors", "hourly", "decisions")
+OBSERVED = ("observed", "observed_peaks", "observed_hourly")  # with the baselines: once per date
 VISITOR_VALUES = ["A", "C", "T", "A observed", "C observed", "T observed"] + \
     [f"R_v (alpha {evaluate6.label(a)})" for a in evaluate6.ALPHAS]
 
@@ -225,7 +226,11 @@ def compute_block(rules, dates, replicates, settings):
     this block only, so a worker's memory does not grow with the dates it has met."""
     days = Days(budget=settings["budget"], same_day=settings["same day"], peak_floor=settings["peak floor"],
                 test=True)
-    tables = {name: [] for name in FILES}
+    tables = {name: [] for name in FILES + OBSERVED}
+    if (rules["kind"] == "control").any():
+        for date in dates:
+            for name, table in evaluate6.observed(*days.get(date)).items():
+                tables[name].append(table.assign(date=date))
     shown = {}
     if "parent" in rules:
         shown = {p: t for p, t in zip(rules["parent"], rules["text"]) if isinstance(p, str)}
@@ -270,10 +275,25 @@ def check_block(tables, rules, dates, replicates):
     if (visitors_per_key.groupby(level=["date", "replicate"]).nunique() != 1).any():
         raise ValueError("groups: rules of one date and replicate do not count the same visitors")
 
+    if not np.isfinite(groups.drop(columns=KEYS).to_numpy(float)).all():
+        raise ValueError("groups: a non-finite value")
+
     peaks = tables["peaks"]
     if keyset(peaks) != every or peaks.duplicated(KEYS + ["site"]).any() or \
             (peaks.groupby(KEYS).size() != SITES).any():
         raise ValueError("peaks: not every site once per rule, date and replicate")
+    if not np.isfinite(peaks[["peak C", "hour"]].to_numpy(float)).all():
+        raise ValueError("peaks: a non-finite value")
+
+    if (rules["kind"] == "control").any():
+        seen = tables.get("observed")
+        if seen is None or sorted(seen["date"]) != sorted(dates) or not np.isfinite(seen["G_hat"]).all():
+            raise ValueError("observed: not one finite G_hat per date")
+        for name in ("observed_peaks", "observed_hourly"):
+            t = tables.get(name)
+            if t is None or set(t["date"]) != set(dates) or t.duplicated(["date", "site"]).any() or \
+                    (t.groupby("date").size() != SITES).any():
+                raise ValueError(f"{name}: not every site once per date")
 
     if knee_keys:
         visitors, hourly = tables.get("visitors"), tables.get("hourly")
@@ -370,6 +390,7 @@ def identity_of(settings, test_path, rules_path, rules, formal=True):
     if not formal:
         return identity
     identity["step 5"] = check_here()
+    identity["step 5 results"] = str(FORMAL)
     if identity["search settings hash"] != STEP5["settings hash"]:
         raise SystemExit(f"the settings loaded have hash {identity['search settings hash']}, not Step 5's")
     check_complete()
@@ -377,7 +398,7 @@ def identity_of(settings, test_path, rules_path, rules, formal=True):
     if not PASS_RECORD.exists():
         raise SystemExit(f"no {PASS_RECORD}: the reproduction check has not passed")
     record = json.loads(PASS_RECORD.read_text())
-    keys = ("rule list hash", "analysis version", "search settings hash", "packages", "step 5")
+    keys = ("rule list hash", "analysis version", "search settings hash", "packages", "step 5", "step 5 results")
     wrong = [k for k in keys if record.get(k) != json.loads(json.dumps(identity[k]))]
     if wrong or Path(rules_path).resolve() != RULE_LIST.resolve():
         raise SystemExit(f"the reproduction pass record does not match this start: {wrong or 'rule list path'}")

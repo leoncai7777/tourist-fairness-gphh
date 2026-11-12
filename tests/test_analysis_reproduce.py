@@ -154,3 +154,15 @@ def test_the_analysis_version_names_the_analysis_code():
     assert len(step5.analysis_version()) == 10
     versions = step5.package_versions()
     assert versions["numpy"] and versions["pandas"]
+
+
+def test_the_step5_results_folder_can_be_named(tmp_path):
+    import os
+    import subprocess
+    code = "import sys; sys.path.insert(0, 'analysis'); import step5; print(step5.FORMAL)"
+    env = {**os.environ, "STEP5_RESULTS": str(tmp_path / "copy")}
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert out.stdout.strip() == str(tmp_path / "copy")
+    env.pop("STEP5_RESULTS")
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert out.stdout.strip().endswith("outputs/search/formal/84c41d36f6")

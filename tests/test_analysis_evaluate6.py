@@ -116,3 +116,13 @@ def test_watched_forms_add_one_column_each_and_change_nothing():
     assert out["decisions"]["tidy agrees"].all()
     assert out["decisions"]["display agrees"].isin([True, False]).all()
     assert out["objectives"] == e6.score(rule, DATE, 1, DAYS, knee=True)["objectives"]
+
+
+def test_the_observed_day_matches_the_day_table():
+    table = pd.read_csv(ROOT / "data" / "verona" / "processed" / "days_2019.csv").set_index("date")
+    for date in validation_dates()[:5]:
+        day, replay = DAYS.get(date)
+        out = e6.observed(day, replay)
+        assert out["observed"]["G_hat"].iloc[0] == pytest.approx(table.loc[date, "G_hat"], abs=1e-12)
+        assert len(out["observed_peaks"]) == 15 and len(out["observed_hourly"]) == 15
+        assert (out["observed_peaks"]["peak C"].to_numpy() == replay.crowding.max(axis=1)).all()

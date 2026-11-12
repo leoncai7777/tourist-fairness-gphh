@@ -14,6 +14,7 @@ the packages, written into every Step 6 output.
 
 import hashlib
 import json
+import os
 import sys
 from importlib import metadata
 from pathlib import Path
@@ -24,7 +25,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 STEP5 = {"settings hash": "84c41d36f6", "code version": "a86c0dfd9f", "data version": "a6a88b365c11",
          "data content": "7db21a4331c5"}
-FORMAL = ROOT / "outputs" / "search" / "formal" / STEP5["settings hash"]
+# Where the Step 5 results are read: the Drive-synced copy in the development checkout (plan, section 2). A
+# frozen Step 6 worktree has no outputs of its own, so it names that folder in STEP5_RESULTS; the path used
+# is written into the pass record and the identity of the test evaluation.
+FORMAL = Path(os.environ.get("STEP5_RESULTS", ROOT / "outputs" / "search" / "formal" / STEP5["settings hash"]))
 SETTINGS_FILE = ROOT / "configs" / "search.json"
 GP_METHODS = ("GP-fixed", "GP-prop", "GP-adaptive")
 RUNS = range(30)

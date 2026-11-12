@@ -33,6 +33,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from evaluate import evaluate, grouped, histogram_bin, hourly_peaks, visitor_rows  # noqa: E402
+from preprocess import gini_hat  # noqa: E402
 from scoring import relative_value, route_value, summary  # noqa: E402
 
 ALPHAS = (0.0, 0.25, 0.5, 1.0)
@@ -97,16 +98,17 @@ def score(rule, date, replicate, days, beta=0.5, stop_limit=True, knee=False, wa
 
     # the other alphas: the mean by the same Series.mean(), and per group the sum of R_v and the threshold counts
     others = [a for a in ALPHAS if a != MAIN_ALPHA]
-    columns = {}
+    columns = {"visitors": np.ones(len(rows), int)}
     for alpha in others:
         means[alpha] = float(pd.Series(r_by_alpha[alpha]).mean())
         columns[f"sum R_v (alpha {label(alpha)})"] = r_by_alpha[alpha]
         for t in THETAS:
             columns[f"R_v >= {t:g} (alpha {label(alpha)})"] = at_least(r_by_alpha[alpha], t).astype(int)
     extra = main_keys(rows).assign(**columns).groupby(GROUP_KEYS).sum().reset_index()
-    if not np.array_equal(extra[GROUP_KEYS].to_numpy(int), main[GROUP_KEYS].to_numpy(int)):
+    if not (np.array_equal(extra[GROUP_KEYS].to_numpy(int), main[GROUP_KEYS].to_numpy(int))
+            and np.array_equal(extra["visitors"].to_numpy(), main["visitors"].to_numpy())):
         raise AssertionError(f"{date} r{replicate}: the groups at the other alphas are not those of grouped()")
-    groups = pd.concat([main, extra.drop(columns=GROUP_KEYS)], axis=1)
+    groups = pd.concat([main, extra.drop(columns=GROUP_KEYS + ["visitors"])], axis=1)
 
     out = {"objectives": {**{f"mean R_v (alpha {label(a)})": means[a] for a in ALPHAS}, "G_hat": result.g_hat},
            "groups": groups, "peaks": hourly_peaks(day, result.crowding)}
@@ -126,6 +128,16 @@ def score(rule, date, replicate, days, beta=0.5, stop_limit=True, knee=False, wa
                         raise AssertionError("a shadow did not see every decision")
                     out["decisions"][f"{name} agrees"] = agrees
     return out
+
+
+def observed(day, replay):
+    """The observed day (plan, section 5): G_hat of the observed entries at the sites available that day, as
+    the simulation counts G_hat, and the observed hourly crowding, with each site's busiest hour. From the
+    frozen replay; no rule and no replicate ($R_v = 1$ by definition)."""
+    return {"observed": pd.DataFrame({"G_hat": [float(gini_hat(replay.entries_per_site[day.available]))]}),
+            "observed_peaks": hourly_peaks(day, replay.crowding),
+            "observed_hourly": pd.DataFrame(replay.crowding, columns=[f"hour {h}" for h in range(24)]).assign(
+                site=day.site_ids)}
 
 
 def decisions_table(day, rows):

@@ -134,6 +134,10 @@ def test_a_small_batch_runs_resumes_verifies_and_refuses(tmp_path, monkeypatch, 
     assert set(log["rule id"]) == {"g_0"} and log["display agrees"].isin([True, False]).all()
     assert {"visitor", "j0 site", "jw site"} <= set(log.columns)
     assert json.loads((out / "task.json").read_text())["mode"] == "not formal"
+    seen = pd.read_csv(out / "blocks" / "baselines" / TWO_DAYS[0] / "observed.csv.gz")
+    assert list(seen["date"]) == [TWO_DAYS[0]] and len(pd.read_csv(
+        out / "blocks" / "baselines" / TWO_DAYS[0] / "observed_peaks.csv.gz")) == 15
+    assert not (block / "observed.csv.gz").exists()  # only with the baselines
     assert not (out / "launcher.lock").exists()
 
     rt.main(args)  # nothing left to do
@@ -200,6 +204,10 @@ def test_the_block_check_refuses_what_is_not_complete(tmp_path, monkeypatch):
     broken("peaks", lambda t: t.iloc[1:])                                             # a site missing
     broken("hourly", lambda t: t[t["rule id"] != "POP"])                              # a knee's table missing
     broken("groups", lambda t: pd.concat([t, t.iloc[:1]], ignore_index=True))        # a group twice
+    broken("groups", lambda t: t.assign(**{"sum R_v": float("nan")}))
+    broken("peaks", lambda t: t.assign(**{"peak C": float("inf")}))
+    broken("observed", lambda t: t.iloc[:0])                                          # the observed day missing
+    broken("observed_peaks", lambda t: t.iloc[1:])
 
 
 @needs_pilot

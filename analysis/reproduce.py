@@ -218,6 +218,7 @@ def main():
     table = write_rule_list()
     record = {"rule list hash": rule_list_hash(), "rules": len(table), "analysis version": analysis_version(),
               "search settings hash": settings_hash(settings), "packages": package_versions(), "step 5": here,
+              "step 5 results": str(FORMAL),
               "runs reproduced": len(folders), "largest difference": largest,
               "tuned largest difference": tuned["largest mean difference"],
               "display agreement on validation days": agreement}
