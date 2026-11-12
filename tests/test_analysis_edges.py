@@ -158,3 +158,24 @@ def test_files_outside_the_checked_blocks_are_never_read_and_a_lock_stops_the_re
     (tmp_path / "launcher.lock").write_text("1")
     with pytest.raises(SystemExit, match="may still be running"):
         rs.load(tmp_path, tmp_path / "rules.csv")
+
+
+def test_the_pooled_overall_mean_lies_between_followers_and_non_followers():
+    class Fake:
+        def sums(self, name, by, columns):
+            index = pd.MultiIndex.from_tuples([("r", True), ("r", False)], names=["rule id", "follows"])
+            return pd.DataFrame({"sum R_v": [70.0, 30.0], "visitors": [70, 30]}, index=index).assign(
+                **{"sum R_v": [63.0, 30.0]})
+    out = further.followers_split(Fake()).loc["r"]
+    assert out["followers"] == 0.9 and out["non-followers"] == 1.0
+    assert out["all evaluated visitors (pooled)"] == pytest.approx(0.93)  # 0.7 x 0.9 + 0.3 x 1.0
+    assert out["followers' share"] == 0.7
+
+
+def test_the_peak_summary_is_per_method_and_site():
+    per_site = pd.DataFrame({"rule id": ["a", "b", "c"], "method": ["GP-fixed", "GP-fixed", "GP-prop"],
+                             "site": [42, 42, 42], "knee peak C": [0.5, 0.7, 0.4], "observed peak C": [0.6] * 3,
+                             "days knee higher": [0.0, 1.0, 0.0]})
+    s = rq3.peaks_summary(per_site).set_index("method")
+    assert s.loc["GP-fixed", "knees"] == 2 and s.loc["GP-fixed", "knee_peak_C"] == 0.6
+    assert s.loc["GP-fixed", "share_of_days_knee_higher"] == 0.5

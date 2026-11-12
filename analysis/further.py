@@ -39,9 +39,15 @@ def knee_values(results):
 
 
 def followers_split(results):
-    """Mean R_v (main alpha) of followers and of non-followers, per rule, pooled over days and replicates."""
+    """Mean R_v (main alpha) of followers, of non-followers and of all evaluated visitors, per rule, each pooled
+    over days and replicates the same way (visitors together), so that the overall one lies between the two.
+    (The mean R_v of the summary is the other kind: the daily means averaged.)"""
     s = results.sums("groups", ["rule id", "follows"], ["sum R_v", "visitors"])
-    return (s["sum R_v"] / s["visitors"]).unstack("follows").rename(columns={True: "followers", False: "non-followers"})
+    out = (s["sum R_v"] / s["visitors"]).unstack("follows").rename(columns={True: "followers", False: "non-followers"})
+    pooled = s.groupby(level="rule id").sum()
+    out["all evaluated visitors (pooled)"] = pooled["sum R_v"] / pooled["visitors"]
+    out["followers' share"] = s["visitors"].unstack("follows")[True] / pooled["visitors"]
+    return out
 
 
 def main_rule(scenario, main):

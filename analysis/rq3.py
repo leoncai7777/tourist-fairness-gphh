@@ -75,12 +75,13 @@ def envelope(results, alpha=rs.MAIN):
             best = max(means.loc[i, r] for i in eligible)
             chosen = next(i for i in eligible if means.loc[i, r] == best)
             rows.append({"method": method, "run": run, "level": g, "reached": True, "rule id": chosen,
-                         "best mean R_v": best, "G_hat": means.loc[chosen, "G_hat"],
-                         "completion": done.loc[chosen, "completion"]})
+                         "best mean R_v": best, "G_hat": means.loc[chosen, "G_hat"], **done.loc[chosen].to_dict()})
     return pd.DataFrame(rows)
 
 
-ENVELOPE_COLUMNS = ["method", "run", "level", "reached", "rule id", "best mean R_v", "G_hat", "completion"]
+ENVELOPE_COLUMNS = ["method", "run", "level", "reached", "rule id", "best mean R_v", "G_hat", "completion",
+                    "ended early", "stops lost", "end: limit", "end: none feasible", "end: no observed stop left",
+                    "end: not a follower"]
 
 
 def envelope_summary(env):
@@ -200,6 +201,16 @@ def end_reasons(knees):
     return pd.DataFrame(rows)
 
 
+def peaks_summary(per_site):
+    """Per method and site: the median over its knees of the knee's peak C, of the observed peak C and of the
+    share of test days on which the knee's is higher, with the number of knees."""
+    return per_site.groupby(["method", "site"]).agg(
+        knees=("rule id", "nunique"), knee_peak_C=("knee peak C", "median"),
+        observed_peak_C=("observed peak C", "median"), share_of_days_knee_higher=("days knee higher", "median"),
+        share_q1=("days knee higher", lambda s: s.quantile(0.25)),
+        share_q3=("days knee higher", lambda s: s.quantile(0.75))).reset_index()
+
+
 def figure4(summary, path, hand=None):
     import matplotlib
     matplotlib.use("Agg")
@@ -293,6 +304,7 @@ def run_all(results, settings, folder):
     end_reasons(k).to_csv(folder / "end_reasons.csv", index=False)
     per_site = peaks(results)
     per_site.to_csv(folder / "peaks.csv", index=False)
+    peaks_summary(per_site).to_csv(folder / "peaks_summary.csv", index=False)
     names = dict(zip(*pd.read_csv(PROCESSED / "sites.csv")[["site", "name"]].T.values))
     figure5(per_site, names, folder / "figure5.png")
     return folder
