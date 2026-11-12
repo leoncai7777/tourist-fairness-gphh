@@ -44,25 +44,57 @@ class Results:
         self.out, self.rules, self.dates, self.data, self.identity = Path(out), rules, dates, data, identity
         self._tables = {}
 
-    def table(self, name):
-        """One kind of table over every block that has it (objectives, groups, peaks, visitors, hourly,
-        decisions, observed, observed_peaks, observed_hourly)."""
-        if name not in self._tables:
-            parts = [read_table(p) for p in sorted(self.out.glob(f"blocks/*/*/{name}.csv.gz"))]
+    def files(self, name, group="*"):
+        return sorted(self.out.glob(f"blocks/{group}/*/{name}.csv.gz"))
+
+    def table(self, name, group="*"):
+        """One kind of table over the blocks of one group (or every group, for the small tables: objectives,
+        observed, observed_peaks, observed_hourly). The large ones (groups, peaks, visitors, decisions) are read
+        a group at a time or summed block by block (sums), so the formal batch fits in memory."""
+        key = (name, group)
+        if key not in self._tables:
+            parts = [read_table(p) for p in self.files(name, group)]
             if not parts:
-                raise ValueError(f"no {name} table in {self.out}")
-            self._tables[name] = pd.concat(parts, ignore_index=True)
-        return self._tables[name]
+                raise ValueError(f"no {name} table for {group} in {self.out}")
+            table = pd.concat(parts, ignore_index=True)
+            if group != "*":
+                return table
+            self._tables[key] = table
+        return self._tables[key]
+
+    def groups(self):
+        return list(dict.fromkeys(self.rules["group"]))
+
+    def sums(self, name, by, columns, keep=None):
+        """Sums of columns by the keys in by, block by block, then over blocks; keep filters rows first."""
+        total = None
+        for path in self.files(name):
+            t = read_table(path)
+            if keep is not None:
+                t = t[keep(t)]
+            part = t.groupby(by)[columns].sum()
+            total = part if total is None else total.add(part, fill_value=0)
+        return total
 
     def rule_means(self):
         """Each rule's test mean of every objective, indexed by rule id."""
-        objectives = self.table("objectives")
-        per_rule = objectives.groupby("rule id").size()
-        expected = len(self.dates) * self.data["replicates"]
-        if set(per_rule.index) != set(self.rules["rule id"]) or (per_rule != expected).any():
-            raise ValueError("not every rule has one row per day and replicate")
-        values = [r_column(a) for a in ALPHAS] + ["G_hat"]
-        return objectives.groupby("rule id")[values].mean()
+        if "means" not in self._tables:
+            values = [r_column(a) for a in ALPHAS] + ["G_hat"]
+            objectives = self.table("objectives")
+            per_rule = objectives.groupby("rule id").size()
+            expected = len(self.dates) * self.data["replicates"]
+            if set(per_rule.index) != set(self.rules["rule id"]) or (per_rule != expected).any():
+                raise ValueError("not every rule has one row per day and replicate")
+            self._tables["means"] = objectives.groupby("rule id")[values].mean()
+        return self._tables["means"]
+
+    def completion(self):
+        """Each rule's visit completion (stops on the new routes over stops on the observed ones), the share
+        of visitors ending early and the stops lost, pooled over every test day and replicate."""
+        s = self.sums("groups", "rule id", ["visitors", "stops", "observed stops", "ended early"])
+        return pd.DataFrame({"completion": s["stops"] / s["observed stops"],
+                             "ended early": s["ended early"] / s["visitors"],
+                             "stops lost": s["observed stops"] - s["stops"]})
 
     def observed(self):
         """The observed days: one G_hat per date."""
