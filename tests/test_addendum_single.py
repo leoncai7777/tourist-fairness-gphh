@@ -221,7 +221,11 @@ def test_the_tables(batches, tmp_path):
     assert len(pd.read_csv(folder / "hand_rules_dominated.csv")) == 5
     sources = json.loads((folder / "sources.json").read_text())
     assert sources["GP-single"]["rule list hash"] != sources["main"]["rule list hash"]
+    assert sources["main path"] == str(Path(sources["main path"]).resolve()) and Path(sources["main path"]).is_absolute()
     assert (folder / "figure_s1.png").exists()
+    with pytest.raises(SystemExit):  # made once
+        single.tables_main(batches["single"], batches["main"], SETTINGS, folder, single_root=batches["single root"],
+                           step5_root=FULL)
 
 
 def test_table_s2_is_the_frozen_paired_difference():
@@ -257,12 +261,194 @@ def test_gp_single_trees_round_trip_and_choose_alike(text):
 
 @needs_pilot
 def test_schedules_compare_saved_checkpoints(tmp_path):
-    (tmp_path / "single").mkdir()
-    (tmp_path / "single" / "GP-single_910").symlink_to(FULL / "GP-adaptive_910")  # any saved checkpoint will do
-    assert single.schedules_match(tmp_path / "single", FULL, runs=[910]) == []
-    (tmp_path / "other").mkdir()
-    (tmp_path / "other" / "GP-single_910").symlink_to(PILOT / "parallel" / "GP-fixed_920")
-    assert single.schedules_match(tmp_path / "other", FULL, runs=[910]) == [910]
+    import pickle
+    # the pilot's own methods with run 900 share a schedule
+    assert single.schedules_match(SHORT, SHORT, runs=[900]) == []
+    # a checkpoint of another run, or not at its last generation, is refused
+    (tmp_path / "wrong").mkdir()
+    (tmp_path / "wrong" / "GP-single_900").symlink_to(PILOT / "parallel" / "GP-fixed_920")
+    with pytest.raises(SystemExit):
+        single.schedules_match(tmp_path / "wrong", SHORT, runs=[900])
+    # a finished run of the right number with another schedule is reported
+    state = pickle.loads((SHORT / "GP-single_900" / "checkpoint" / "checkpoint.pkl").read_bytes())
+    state["schedule"] = list(reversed(state["schedule"]))
+    folder = tmp_path / "other" / "GP-single_900" / "checkpoint"
+    folder.mkdir(parents=True)
+    (folder / "checkpoint.pkl").write_bytes(pickle.dumps(state))
+    assert single.schedules_match(tmp_path / "other", SHORT, runs=[900]) == [900]
+
+
+# ---------------------------------------------------------------------- #
+# The formal entry: rule list, reproduction, pass record, identity
+# ---------------------------------------------------------------------- #
+
+PILOT_IDENTITY = {"settings hash": "d1e47312ea", "code version": "b9ea72de0e", "data version": "a6a88b365c11"}
+
+
+def pilot_settings():
+    out = dict(SETTINGS)
+    out.update({"population": 40, "generations": 20, "monitor every": 5, "validation replicates": 1,
+                "R range": (0.0, 1.5), "G range": (0.0, 1.0)})
+    return out
+
+
+@needs_pilot
+def test_the_rule_list_is_the_saved_front():
+    table = single.make_rule_list(SHORT, runs=[900])
+    front = pd.read_csv(SHORT / "GP-single_900" / "results" / "front.csv.gz")
+    assert len(table) == len(front)
+    assert list(table["text"]) == list(front["text"]) and list(table["knee"]) == list(front["knee"])
+    assert list(table["nodes"]) == list(front["nodes"]) and table["rule id"].is_unique
+    two = table.copy()
+    two.loc[0, "knee"] = True  # a second knee
+    with pytest.raises(SystemExit):
+        single.check_rule_list(two, runs=[900])
+    with pytest.raises(SystemExit):  # a run missing
+        single.check_rule_list(table, runs=[900, 901])
+
+
+@pytest.fixture(scope="module")
+def reproduced(tmp_path_factory):
+    """The reproduction check run for real on the pilot GP-single run (its own settings, identity and 35
+    validation days); only the Step 5 code check and the completion marks are replaced, as a pilot has none."""
+    if not have_pilot:
+        pytest.skip("no pilot outputs")
+    base = tmp_path_factory.mktemp("reproduced")
+    root = base / "root"  # a root as a formal batch has it: the pilot run's outputs, with its marks
+    run = root / "GP-single_900"
+    run.mkdir(parents=True)
+    for name in ("results", "checkpoint"):
+        (run / name).symlink_to(SHORT / "GP-single_900" / name)
+    (run / "complete.json").write_text(json.dumps({**PILOT_IDENTITY, "method": "GP-single", "run": 900}))
+    (root / "task.json").write_text(json.dumps(PILOT_IDENTITY))
+    out = base / "out"
+    keep = single.check_here, single.check_single
+    single.check_here = lambda: {"stand-in": "the Step 5 identity"}
+    single.check_single = lambda *a, **k: None
+    try:
+        single.reproduce_main(1, root=root, runs=[900], out=out, settings=pilot_settings(), expected=PILOT_IDENTITY,
+                              main_root=SHORT)
+    finally:
+        single.check_here, single.check_single = keep
+    return out
+
+
+def formal_identity(out, settings, **change):
+    keep = single.check_here, single.check_single, single.addendum_version
+    single.check_here = lambda: {"stand-in": "the Step 5 identity"}
+    single.check_single = lambda *a, **k: None
+    if "addendum version" in change:
+        single.addendum_version = lambda: change["addendum version"]
+    try:
+        rules = rs.read_table(out / "rules.csv")
+        return single.identity_of(settings, rt.TEST_SETTINGS, out / "rules.csv", rules, formal=True,
+                                  root=out.parent / "root",
+                                  out=out, runs=[900], expected={"settings hash": single.settings_hash(settings)})
+    finally:
+        single.check_here, single.check_single, single.addendum_version = keep
+
+
+@needs_pilot
+def test_the_reproduction_writes_a_matching_pass_record(reproduced):
+    record = json.loads((reproduced / "reproduced.json").read_text())
+    assert record["runs reproduced"] == 1 and record["largest difference"] <= 1e-12
+    assert record["rule list hash"] == rt.rule_list_hash(reproduced / "rules.csv") and record["schedules hash"]
+    identity = formal_identity(reproduced, pilot_settings())
+    assert identity["gp-single search"] == record["gp-single search"]
+    with pytest.raises(SystemExit):  # the check is run once
+        single.reproduce_main(1, root=reproduced.parent / "root", runs=[900], out=reproduced, settings=pilot_settings())
+
+
+@needs_pilot
+def test_a_start_is_refused_when_the_pass_record_does_not_match(reproduced, tmp_path):
+    (tmp_path / "root").symlink_to(reproduced.parent / "root")
+
+    def copy():
+        c = tmp_path / f"c{len(list(tmp_path.iterdir()))}"
+        shutil.copytree(reproduced, c)
+        return c
+    c = copy()  # the rule list changed
+    t = rs.read_table(c / "rules.csv")
+    t.loc[0, "nodes"] = t.loc[0, "nodes"] + 1
+    t.to_csv(c / "rules.csv", index=False)
+    with pytest.raises(SystemExit):
+        formal_identity(c, pilot_settings())
+    c = copy()  # another search batch in the record
+    record = json.loads((c / "reproduced.json").read_text())
+    record["gp-single search"]["results hash"] = "000000000000"
+    (c / "reproduced.json").write_text(json.dumps(record))
+    with pytest.raises(SystemExit):
+        formal_identity(c, pilot_settings())
+    with pytest.raises(SystemExit):  # another addendum version
+        formal_identity(copy(), pilot_settings(), **{"addendum version": "another"})
+    c = copy()  # no pass record
+    (c / "reproduced.json").unlink()
+    with pytest.raises(SystemExit):
+        formal_identity(c, pilot_settings())
+
+
+# ---------------------------------------------------------------------- #
+# A real interruption
+# ---------------------------------------------------------------------- #
+
+RUNNER = """
+import sys
+sys.path.insert(0, {analysis!r}); sys.path.insert(0, {addendum!r})
+import run_test as rt, results as rs, single
+rt.dates_of = rs.dates_of = lambda d: {days!r}
+if __name__ == "__main__":
+    single.run_main(2, {out!r}, {rules!r}, {test!r}, formal=False)
+"""
+
+
+@needs_pilot
+def test_a_real_interruption_stops_cleanly_and_resumes(tmp_path):
+    import os
+    import signal
+    import subprocess
+    import time
+    days = ["2019-01-28", "2019-01-29", "2019-01-30", "2019-01-31"]
+    data = {**rt.load_test_settings(), "split": "validation", "replicates": 3, "dates per block": 1}
+    (tmp_path / "test.json").write_text(json.dumps(data))
+    front = pd.read_csv(SHORT / "GP-single_900" / "results" / "front.csv.gz")
+    rows = [{"rule id": f"GP-single_{RUN}_{n:03d}", "group": f"GP-single_{RUN}", "kind": "gp", "method": "GP-single",
+             "run": RUN, "text": t, "knee": bool(k), "nodes": int(s)}
+            for n, (t, k, s) in enumerate(zip(front["text"], front["knee"], front["nodes"]))][:8]
+    pd.DataFrame(rows).to_csv(tmp_path / "rules.csv", index=False)
+
+    def script(out):
+        path = tmp_path / f"run_{Path(out).name}.py"
+        path.write_text(RUNNER.format(analysis=str(ROOT / "analysis"), addendum=str(ROOT / "addendum"), days=days,
+                                      out=str(out), rules=str(tmp_path / "rules.csv"), test=str(tmp_path / "test.json")))
+        return [sys.executable, str(path)]
+    whole, cut = tmp_path / "whole", tmp_path / "cut"
+    assert subprocess.run(script(whole)).returncode == 0
+    proc = subprocess.Popen(script(cut), start_new_session=True)
+    deadline = time.time() + 120
+    while not list(cut.glob("blocks/*/*.partial")) and time.time() < deadline:
+        time.sleep(0.05)
+    assert list(cut.glob("blocks/*/*.partial")), "no block was being written"
+    time.sleep(0.3)
+    os.killpg(proc.pid, signal.SIGINT)  # as one Ctrl-C in the terminal reaches the launcher and its workers
+    assert proc.wait(timeout=60) != 0
+    for _ in range(100):  # every process of the launcher's group has exited
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("a worker is still running after the stop")
+    assert not (cut / "launcher.lock").exists()
+    assert len(list(cut.glob("blocks/*/*/done.json"))) < len(days)  # it really stopped part way
+    assert subprocess.run(script(cut)).returncode == 0  # the same command resumes
+    assert hashes(cut) == hashes(whole)
+    original = rt.dates_of
+    rt.dates_of = rs.dates_of = lambda d: list(days)
+    try:
+        single.load_single(cut, tmp_path / "rules.csv", tmp_path / "test.json", formal=False)  # verified
+    finally:
+        rt.dates_of = rs.dates_of = original
 
 
 # ---------------------------------------------------------------------- #
@@ -301,6 +487,19 @@ def test_beta_means_weight_days_equally_and_shares_pool_visitors():
     assert m["share R_v < 1"] == pytest.approx((r < 1).mean(), abs=1e-15)
 
 
+def test_a_saved_r_v_that_differs_is_refused_even_if_the_summaries_agree():
+    v = toy_rows()
+    v["R_v (alpha 0.25)"] = single.r_at_beta(v, 0.5)
+    single.check_saved_r(v)
+    changed = v.copy()
+    changed.loc[0, "R_v (alpha 0.25)"] += 1e-9  # one up, one down: the mean and the share below 1 do not move
+    changed.loc[1, "R_v (alpha 0.25)"] -= 1e-9
+    assert changed["R_v (alpha 0.25)"].mean() == pytest.approx(v["R_v (alpha 0.25)"].mean(), abs=1e-15)
+    assert ((changed["R_v (alpha 0.25)"] < 1) == (v["R_v (alpha 0.25)"] < 1)).all()
+    with pytest.raises(AssertionError):
+        single.check_saved_r(changed)
+
+
 def test_knee_rows_are_checked_before_re_scoring():
     v = toy_rows()
     single.check_knee_rows(v, ["k"], ["d1", "d2"], 1)
@@ -324,4 +523,7 @@ def test_table_s4_reproduces_the_main_outputs_at_beta_half(batches, tmp_path):
     # with GP-single: the main-batch values must be the first version's
     folder = with_days(lambda: single.beta_main(batches["main"], tmp_path / "beta", batches["single"]))
     assert (folder / "table_s4_with_gp_single.csv").exists()
-    assert (folder / "table_s4_with_gp_single_sources.json").exists()
+    sources = json.loads((folder / "table_s4_with_gp_single_sources.json").read_text())
+    assert sources["dates"] == DAYS and Path(sources["main path"]).is_absolute() and sources["knees"]
+    with pytest.raises(SystemExit):  # each version is made once
+        with_days(lambda: single.beta_main(batches["main"], tmp_path / "beta"))

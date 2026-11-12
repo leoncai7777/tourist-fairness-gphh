@@ -103,20 +103,30 @@ def search_identity(root=SINGLE, runs=RUNS):
             "path": str(root)}
 
 
-def saved_schedule(folder):
-    """The environment schedule a run saved in its checkpoint (texts and numbers only; no class is unpickled)."""
+def saved_schedule(folder, method, run):
+    """The environment schedule a finished run saved in its checkpoint, after checking that the checkpoint is
+    that run's, at its last generation. Only the project's own checkpoints are read this way: pickle is not a
+    safe reader for files from elsewhere. Texts and numbers only; no class is unpickled."""
     state = pickle.loads((Path(folder) / "checkpoint" / "checkpoint.pkl").read_bytes())
+    if state["method"] != method or state["run"] != run or state["generation"] != state["settings"]["generations"]:
+        raise SystemExit(f"{folder}: the checkpoint is not the finished run {method} {run}")
     return state["schedule"]
 
 
-def schedules_match(single_root=SINGLE, main_root=FORMAL, runs=RUNS, methods=MAIN_METHODS):
+def schedules_match(single_root=SINGLE, main_root=FORMAL, runs=RUNS, methods=MAIN_METHODS, method=METHOD):
     """The run numbers whose saved GP-single schedule differs from any main method's with the same number."""
     wrong = []
     for run in runs:
-        mine = saved_schedule(run_folder(METHOD, run, single_root))
-        if any(saved_schedule(run_folder(m, run, main_root)) != mine for m in methods):
+        mine = saved_schedule(run_folder(method, run, single_root), method, run)
+        if any(saved_schedule(run_folder(m, run, main_root), m, run) != mine for m in methods):
             wrong.append(run)
     return wrong
+
+
+def schedules_hash(root=SINGLE, runs=RUNS, method=METHOD):
+    """A short hash of the compared schedules, kept in the pass record as the evidence of pairing."""
+    text = json.dumps([saved_schedule(run_folder(method, r, root), method, r) for r in runs])
+    return hashlib.sha256(text.encode()).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------------- #
@@ -144,8 +154,8 @@ def reevaluate(folder, settings, dates=None, k=None):
 
 
 def check_run(job):
-    folder, run, settings, dates, k = job
-    problems = reproduce.check_inputs(folder, METHOD, run, settings["population"])
+    folder, run, settings, dates, k, expected = job
+    problems = reproduce.check_inputs(folder, METHOD, run, settings["population"], expected)
     static = reproduce.static_check(folder, reproduce.value_range(settings))
     again = reevaluate(folder, settings, dates, k)
     ok = (not problems and static["same rules and copies"] and static["same knee"]
@@ -185,18 +195,20 @@ def check_rule_list(rules, runs=RUNS):
         raise SystemExit("the GP-single rule list does not cover what it must: " + "; ".join(problems))
 
 
-def reproduce_main(workers, root=SINGLE, runs=RUNS, out=OUT, dates=None, k=None):
-    """The reproduction check, then the rule list and its pass record, once."""
+def reproduce_main(workers, root=SINGLE, runs=RUNS, out=OUT, dates=None, k=None, settings=None, expected=STEP5,
+                   main_root=FORMAL):
+    """The reproduction check, then the rule list and its pass record, once. The keyword arguments other than
+    out are for the tests on a pilot run (its settings and identity); the formal check uses the defaults."""
     rule_list, record_path = Path(out) / "rules.csv", Path(out) / "reproduced.json"
     if record_path.exists() or rule_list.exists():
         raise SystemExit(f"{out} already has a rule list or a pass record; the check is not run again")
     here = check_here()
     check_single(root, runs)
-    wrong = schedules_match(root, FORMAL, runs)
+    wrong = schedules_match(root, main_root, runs)
     if wrong:
         raise SystemExit(f"saved schedules differ from the main methods' for runs {wrong}")
-    settings = load_settings(SETTINGS_FILE)
-    jobs = [(run_folder(METHOD, r, root), r, settings, dates, k) for r in runs]
+    settings = load_settings(SETTINGS_FILE) if settings is None else settings
+    jobs = [(run_folder(METHOD, r, root), r, settings, dates, k, expected) for r in runs]
     failed, largest = [], 0.0
     with ProcessPoolExecutor(workers) as pool:
         for run, ok, diff in pool.map(check_run, jobs):
@@ -213,7 +225,8 @@ def reproduce_main(workers, root=SINGLE, runs=RUNS, out=OUT, dates=None, k=None)
     record = {"rule list hash": rt.rule_list_hash(rule_list), "rules": len(table),
               "analysis version": analysis_version(), "addendum version": addendum_version(),
               "search settings hash": settings_hash(settings), "packages": package_versions(), "step 5": here,
-              "gp-single search": search_identity(root, runs), "runs reproduced": len(jobs),
+              "gp-single search": search_identity(root, runs), "schedules hash": schedules_hash(root, runs),
+              "runs reproduced": len(jobs),
               "largest difference": largest}
     rt.write_atomic(record_path, json.loads(json.dumps(record)))
     print(f"rule list written: {rule_list} ({len(table)} rules); pass record: {record_path}", flush=True)
@@ -223,7 +236,8 @@ def reproduce_main(workers, root=SINGLE, runs=RUNS, out=OUT, dates=None, k=None)
 # The test evaluation
 # ---------------------------------------------------------------------- #
 
-def identity_of(settings, test_path, rules_path, rules, formal=True, root=SINGLE, out=OUT):
+def identity_of(settings, test_path, rules_path, rules, formal=True, root=SINGLE, out=OUT, runs=RUNS,
+                expected=STEP5):
     """This batch's identity: the main batch's terms, with the addendum version and the GP-single search batch
     in place of the Step 5 results; formal starts also need the pass record to match."""
     identity = {"mode": "formal" if formal else "not formal", "batch": "GP-single",
@@ -234,11 +248,11 @@ def identity_of(settings, test_path, rules_path, rules, formal=True, root=SINGLE
     if not formal:
         return identity
     identity["step 5"] = check_here()
-    identity["gp-single search"] = search_identity(root)
-    if identity["search settings hash"] != STEP5["settings hash"]:
+    identity["gp-single search"] = search_identity(root, runs)
+    if identity["search settings hash"] != expected["settings hash"]:
         raise SystemExit("the settings loaded do not have the Step 5 settings hash")
-    check_single(root)
-    check_rule_list(rules)
+    check_single(root, runs)
+    check_rule_list(rules, runs)
     record_path = Path(out) / "reproduced.json"
     if not record_path.exists():
         raise SystemExit(f"no {record_path}: the GP-single reproduction check has not passed")
@@ -342,7 +356,7 @@ def check_batches(single, main):
             "main": {k: b.get(k) for k in ("rule list hash", "step 5 results")},
             "shared": {k: a.get(k) for k in ("search settings hash", "step 6 settings hash", "analysis version",
                                              "packages", "step 5")},
-            "main path": str(main.out), "GP-single path": str(single.out)}
+            "main path": str(Path(main.out).resolve()), "GP-single path": str(Path(single.out).resolve())}
 
 
 # ---------------------------------------------------------------------- #
@@ -492,6 +506,8 @@ def figure_s1(fronts, path):
 
 def tables_main(single, main, settings, folder, single_root=SINGLE, step5_root=FORMAL):
     folder = Path(folder)
+    if (folder / "sources.json").exists():  # written last: the tables are made once
+        raise SystemExit(f"{folder} already holds the GP-single tables; they are made once")
     folder.mkdir(parents=True, exist_ok=True)
     sources = check_batches(single, main)
     fronts = all_fronts(single, main, rs.MAIN, rq1.main_range(settings))
@@ -538,6 +554,18 @@ def check_knee_rows(v, ids, dates, replicates):
         raise ValueError("knee rows: a non-finite part or an observed A that is not positive")
 
 
+def check_saved_r(v):
+    """At beta = 0.5 every visitor's re-scored R_v equals the R_v saved in the same row, exactly."""
+    saved = v[f"R_v (alpha {evaluate6.label(rs.MAIN)})"].to_numpy(float)
+    again = r_at_beta(v, MAIN_BETA)
+    if not np.isfinite(saved).all():
+        raise ValueError("knee rows: a non-finite saved R_v")
+    if not np.array_equal(again, saved):
+        bad = v.loc[again != saved, rt.KEYS].drop_duplicates().head(3).to_dict("records")
+        raise AssertionError(f"at beta 0.5 a visitor's R_v differs from the saved one (largest difference "
+                             f"{np.max(np.abs(again - saved)):.1e}; first at {bad})")
+
+
 def knee_beta_measures(v, betas=BETAS):
     """One knee: at each beta, its mean R_v as the test means are made (the mean over visitors of each date and
     replicate, then over dates and replicates) and the share of visitors with R_v < 1 pooled over them."""
@@ -564,6 +592,7 @@ def beta_rows(res, label):
         v = res.table("visitors", group)
         v = v[v["rule id"].isin(ids)]
         check_knee_rows(v, ids, res.dates, res.data["replicates"])
+        check_saved_r(v)
         for rule_id, k in v.groupby("rule id", sort=False):
             meta = knees[knees["rule id"] == rule_id].iloc[0]
             for beta, m in knee_beta_measures(k).items():
@@ -615,11 +644,13 @@ def beta_main(main, folder, single=None, single_root=SINGLE):
     """Table S4 from the verified main batch; with single, the separately labelled version with GP-single,
     whose main-batch values must equal the first version's."""
     folder = Path(folder)
+    name = "table_s4" if single is None else "table_s4_with_gp_single"
+    if (folder / f"{name}_sources.json").exists():  # written last: each version is made once
+        raise SystemExit(f"{folder / name} is there already; it is made once")
     folder.mkdir(parents=True, exist_ok=True)
     rows = beta_rows(main, "main")
     check_at_main_beta(rows, main)
     g = main.rule_means()["G_hat"]
-    name = "table_s4"
     if single is not None:
         check_batches(single, main)
         first = folder / "knees_beta.csv"
@@ -632,18 +663,21 @@ def beta_main(main, folder, single=None, single_root=SINGLE):
         check_at_main_beta(extra, single)
         rows = pd.concat([extra, rows], ignore_index=True)
         g = pd.concat([single.rule_means()["G_hat"], g])
-        name = "table_s4_with_gp_single"
     else:
         rows.to_csv(folder / "knees_beta.csv", index=False)
     table_s4(rows, g).to_csv(folder / f"{name}.csv", index=False)
-    record = {"alpha": rs.MAIN, "betas": list(BETAS), "dates": len(main.dates), "replicates": main.data["replicates"],
+    knees = rows[["batch", "rule id", "method", "kind"]].drop_duplicates()
+    record = {"alpha": rs.MAIN, "betas": list(BETAS), "dates": list(main.dates), "replicates": main.data["replicates"],
+              "knees": knees.to_dict("records"),
               "main batch": {k: main.identity.get(k) for k in ("rule list hash", "analysis version", "step 5 results")},
+              "main path": str(Path(main.out).resolve()),
               "main visitor files": file_hashes(main),
               "addendum version": addendum_version(), "code version": main.identity.get("step 5", {}).get("code version"),
               "mean R_v": "mean over visitors of each date and replicate, then over dates and replicates",
               "share R_v < 1": "pooled over visitors, dates and replicates"}
     if single is not None:
         record["GP-single batch"] = {k: single.identity.get(k) for k in ("rule list hash", "gp-single search")}
+        record["GP-single path"] = str(Path(single.out).resolve())
         record["GP-single visitor files"] = file_hashes(single)
     rt.write_atomic(folder / f"{name}_sources.json", json.loads(json.dumps(record)))
     return folder
@@ -681,12 +715,8 @@ def main(argv=None):
     elif args.step == "run":
         run_main(args.workers, OUT, RULE_LIST, rt.TEST_SETTINGS)
     elif args.step == "verify":
-        rules, data = read_table(RULE_LIST), rt.load_test_settings()
-        identity = identity_of(load_settings(SETTINGS_FILE), rt.TEST_SETTINGS, RULE_LIST, rules)
-        missing, bad = rt.verify(OUT, rules, rt.dates_of(data), data, identity)
-        print(f"{len(missing)} blocks missing, {len(bad)} changed or of another identity", flush=True)
-        if missing or bad:
-            raise SystemExit(1)
+        load_single()  # the same checks as every reader: no lock, task.json, every block and hash
+        print("0 blocks missing, 0 changed or of another identity", flush=True)
     elif args.step == "tables":
         main_batch = rs.load(rt.OUT, rt.RULE_LIST)
         print(tables_main(load_single(), main_batch, load_settings(SETTINGS_FILE), OUT / "analysis"))
