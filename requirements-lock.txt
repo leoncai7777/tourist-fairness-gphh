@@ -20,3 +20,4 @@ pytest==9.2.0
 python-dateutil==4.0.0
 qrcode==8.2
 tzdata==2026.6
+scipy==1.14.1  # added for Step 6 (environment gphh6 = this list plus SciPy)

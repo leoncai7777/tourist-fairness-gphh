@@ -58,7 +58,7 @@ Every run checks the hashes of its code, data and settings, and stops if they di
 
 | Folder | Report |
 |---|---|
-| `results/2019/rq1`, `rq2`, `rq3`, `others` | Sections 10.1–10.3; Appendices C.2–C.5 |
+| `results/2019/rq1`, `rq2`, `rq3`, `others` | Sections 10.1–10.3; Appendix C |
 | `results/2022`, `results/2023` | Section 10.4, other years |
 | `results/further/` | Section 10.4, further checks and the constant $h_2$ |
 | `results/walking_weight/` | Section 10.4, walking weight |
