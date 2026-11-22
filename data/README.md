@@ -7,7 +7,7 @@ VeronaCard is Verona's city pass. Each time a visitor enters an attraction with 
 | File | What it is | Source and licence |
 |---|---|---|
 | `verona/veronacard_2019_opendata.csv` | Full year 2019. One row per entry: card id, card type (24h/48h), activation date, visit date, visit time (to the minute), site name, latitude, longitude | Comune di Verona, "Dati Veronacard 2019", [dati.veneto.it](https://dati.veneto.it/opendata/Dati_Veronacard_2019), CC BY 4.0 |
-| `verona/veronacard_2022_original.csv` | Full year 2022 (1 Jan to 30 Dec). One row per entry: visit date, visit time (to the second), site name, device, card id, activation date, "in", count, card type | [smigliorini/itinerary-drl](https://github.com/smigliorini/itinerary-drl), released with Dalla Vecchia et al. (2024). **Not in this repository: download it into `data/verona/`.** The MIT licence of that repository (`verona/LICENSE-itinerary-drl.txt`) covers its code; the data's own licence is not stated; the data originate from the VeronaCard system of the Comune di Verona |
+| `verona/veronacard_2022_original.csv` | Full year 2022 (1 Jan to 30 Dec). One row per entry: visit date, visit time (to the second), site name, device, card id, activation date, "in", count, card type | [smigliorini/itinerary-drl](https://github.com/smigliorini/itinerary-drl), released with Dalla Vecchia et al. (2024). **Not in this repository: download it into `data/verona/`.** Its MIT licence covers its code; the data's own licence is not stated; the data originate from the VeronaCard system of the Comune di Verona |
 | `verona/data_2023.csv` | 1 Jan to 27 Feb 2023 only | Same source as the 2022 file. **Not in this repository: download it into `data/verona/`.** The data's own licence is not stated |
 | `verona/poi_it_complete.csv` | Attraction list with typical visit time (minutes) and capacity (`max_crowd`, given for some attractions) | Same repository (itinerary-drl). **Not in this repository: download it into `data/verona/`.** The data's own licence is not stated |
 | `verona/poi_time_travel.csv` | Walking time between attraction pairs (minutes), computed along the street network with OSMnx (Dalla Vecchia et al. 2024, p.470) | Same repository (itinerary-drl). **Not in this repository: download it into `data/verona/`.** The data's own licence is not stated |
@@ -39,17 +39,3 @@ Quick numbers (computed with pandas from these files):
 Limits: only card holders (mostly culture-focused visitors); entries only, no exit times, so stay times are inferred from the gaps between entries (`src/preprocess.py`); capacity is missing or doubtful for several sites.
 
 Please cite: Comune di Verona (open data, 2019); Migliorini, Carra and Belussi (2021), IEEE TETC 9(4):1765-1779, doi 10.1109/TETC.2019.2920484; Dalla Vecchia et al. (2024), Information Technology & Tourism 26(3):449-484, doi 10.1007/s40558-024-00288-x.
-
-## Toronto (backup, not in this repository)
-
-Flickr trips from Lim et al. (2015), as released with Chen et al. (2016): 29 attractions, 6,057 trips, 1,395 users. Most trips have one stop, and there are no stay times or capacities, so it is kept only as a backup or a second city.
-
-The source repository gives no licence and the data contains Flickr user ids, so it is not copied here. To get it:
-
-```
-mkdir -p data/toronto
-curl -L -o data/toronto/poi-Toro.csv  https://raw.githubusercontent.com/computationalmedia/tour-cikm16/master/data/poi-Toro.csv
-curl -L -o data/toronto/traj-Toro.csv https://raw.githubusercontent.com/computationalmedia/tour-cikm16/master/data/traj-Toro.csv
-```
-
-`data/toronto/` is in `.gitignore`.
