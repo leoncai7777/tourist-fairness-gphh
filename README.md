@@ -37,7 +37,7 @@ All experiments are done and frozen. The report is in its final draft and will b
 
 Run from the repository root, at the tag of each step.
 
-1. Re-implementation of the single-tourist GPHH (Step 1): put the TOPTW instances from the [KU Leuven orienteering page](https://www.mech.kuleuven.be/en/cib/op) into `data/toptw/`, then `python3 src/single_gphh.py` and `python3 src/reproduction_report.py`
+1. Re-implementation of the single-tourist GPHH (Step 1): put the TOPTW instances from the [KU Leuven orienteering page](https://www.mech.kuleuven.be/en/cib/op) into `data/toptw/`, then `python3 src/single_gphh.py --instances <the 40 instances listed in outputs/toptw/reproduction.md> --runs 30 --max-points 100 --out outputs/toptw/all40.csv` and `python3 src/reproduction_report.py`
 2. Prepare the data: `python3 src/preprocess.py`
 3. Formal runs, 30 per method (about 9 hours with 12 processes): `python3 tools/run_formal.py`
 4. Test evaluation (about 12 hours): `python3 analysis/reproduce.py`, then `python3 analysis/run_test.py --workers 12`
