@@ -2,53 +2,52 @@
 
 **Learning the Fairness Trade-off in Tourist Trip Design: A Genetic Programming Hyper-Heuristic**
 
-Leon Cai, Master of Artificial Intelligence capstone project, Victoria University of Wellington. Supervisor: Dr Fangfang Zhang.
+Leon Cai, Master of Artificial Intelligence, Victoria University of Wellington. Supervisor: Dr Fangfang Zhang.
 
-## The problem
-
-Many visitors follow similar day plans, so they reach the same attractions at the same time while others stay quiet. Recommending "the next best place" to everyone only moves the crowd. This project evolves a readable rule that, each time a visitor finishes a stop, picks their next stop and learns from the current state how to balance spreading visits more evenly across attractions against visitors' satisfaction.
-
-## Two objectives
-
-**Visitors: satisfaction (a proxy).** Following Expectancy Disconfirmation Theory (Oliver 1980), the route a visitor actually took stands for what they expected and the suggested route for what they get:
-
-$$R_v = 1 + \frac{V(r_v^N) - V(r_v^O)}{\sum_{i \in r_v^O} A_i}, \qquad V(r) = \sum_{i \in r} A_i - \alpha \sum_{i \in r} C_{i,t_i} - \beta\, T(r)$$
-
-where $A_i$ is how popular attraction $i$ is (past visitors relative to the most visited one), $C_{i,t_i}$ how crowded it is when the visitor arrives (people inside relative to its usual peak), and $T(r)$ the walking time. The share of visitors with $R_v \ge \theta$ is reported. $R_v$ is a model-based proxy, not measured satisfaction; this form is provisional until agreed with the supervisor.
-
-**Attractions: fairness.** The Gini index of each attraction's visits $x_i$ over the day ($N$ attractions, mean $\mu$), also reported normalised so that the maximum is 1:
-
-$$G = \frac{\sum_{i<j} |x_i - x_j|}{N^2 \mu}, \qquad \hat{G} = \frac{G}{1 - 1/N}$$
-
-Equal counts are not the goal: a lower Gini is better, but more appealing attractions can stay busier.
-
-## Method
-
-A genetic programming hyper-heuristic (GPHH) evolves the rule. Each simulated day starts from a real day of visitors. Each visitor keeps their real first stop and start time, with a time budget inferred from their real day and at most as many stops as they really made; after each visit the rule scores the attractions still reachable and sends the visitor to the highest. The evolved rule is compared with hand-written rules and with rules that keep one fixed trade-off.
-
-## Data
-
-VeronaCard, Verona's city pass: every attraction entry with its time, for 2019 (open data, CC BY 4.0) and 2022 and early 2023 (released with Dalla Vecchia et al. 2024; the repository's code is MIT, and the data's own licence is not stated). See [`data/README.md`](data/README.md) for files, sources, licences and summary numbers.
+A next-stop rule for each visitor weighs the visitor's satisfaction against fairness among attractions (how evenly visits are spread). This project learns the rule with a genetic programming hyper-heuristic (GPHH), with a second evolved tree that sets the fairness weight from the state of the day, and tests it in a simulator of whole days built from Verona's city card records.
 
 ## Status (November 2026)
 
-- [x] Problem definition and the two objectives agreed with the supervisor
-- [x] Data collected: VeronaCard 2019 and 2022, attraction list, walking times
-- [x] Data exploration: data quality, 2019 vs 2022, routes and hourly crowding (`src/eda.py`, results in [`outputs/eda/summary.md`](outputs/eda/summary.md))
-- [x] Reproduction of the single-tourist GPHH of Mei and Zhang (2018) on 40 TOPTW instances ([`outputs/toptw/reproduction.md`](outputs/toptw/reproduction.md))
-- [ ] Sanity checks of the objectives on observed routes
-- [ ] Simulator that replays a real day, with hand-written baseline rules
-- [ ] GPHH implementation and experiments
-- [ ] Planned extension: capacity and environmental limits (send visitors only where there is spare capacity)
+All experiments are done and frozen. The report is in its final draft and will be added here when it is submitted.
 
-## Repository layout
+## Folders
 
 | Folder | Content |
 |---|---|
-| `data/` | Datasets and their sources (`data/README.md`) |
-| `src/` | Code, run from the repository root: `preprocess.py` (data preparation, writes `data/verona/processed/`, not committed), `eda.py` (data exploration); `toptw.py`, `single_gphh.py`, `reproduction_report.py` (the single-tourist reproduction) |
+| `src/` | Data preparation, simulator, rules, GP search, evaluation, and the re-implementation of the single-tourist GPHH (Step 1) |
+| `tools/` | Launchers for the pilot and the formal runs |
+| `analysis/` | Test evaluation and the analyses of RQ1–RQ3 (Step 6) |
+| `addendum/` | GP-single and the walking-weight re-scoring (addendum to Step 6) |
+| `configs/` | Frozen settings of the search, the test evaluation and the further checks |
 | `tests/` | Tests: `python3 -m pytest tests -q` |
-| `configs/` | Experiment settings (to come) |
-| `outputs/` | Results: `eda/` (summary and figures), `toptw/` (reproduction) |
+| `data/` | VeronaCard 2019 and how to get the other files (`data/README.md`) |
+| `outputs/` | Small records and figures; large outputs (runs, test blocks) are not committed |
 
-Python 3.11; packages in `requirements.txt`, exact versions in `requirements-lock.txt`. The TOPTW instances are not in this repository: download them from the KU Leuven orienteering page into `data/toptw/`.
+## Requirements
+
+- Python 3.11
+- `pip install -r requirements.txt` (exact versions in `requirements-lock.txt`)
+
+## Data
+
+`data/verona/veronacard_2019_opendata.csv` is included (CC BY 4.0). The 2022 and 2023 records and the tables of sites and walking times come from [itinerary-drl](https://github.com/smigliorini/itinerary-drl), whose data licence is not stated, so they are not copied here. Download them into `data/verona/` as shown in `data/README.md`.
+
+## How to reproduce
+
+Run from the repository root, at the tag of each step.
+
+1. Prepare the data: `python3 src/preprocess.py`
+2. Formal runs, 30 per method (about 9 hours with 12 processes): `python3 tools/run_formal.py`
+3. Test evaluation (about 12 hours): `python3 analysis/reproduce.py`, then `python3 analysis/run_test.py --workers 12`
+4. Analyses: `python3 analysis/rq1.py`, `rq2.py`, `rq3.py`, `others.py`; further checks with `analysis/further.py --scenario configs/further_*.json`
+5. GP-single and the walking weight: `python3 addendum/single.py check | run | reproduce | tables | beta`
+
+Every run checks the hashes of its code, data and settings, and stops if they differ from those recorded.
+
+## Frozen snapshots and the report
+
+| Tag | What it fixes | Report |
+|---|---|---|
+| `step5-formal` | Code and settings of the 90 formal runs and the tuned rule | Chapters 8 and 9 |
+| `step6-formal` | Test evaluation, the RQ1–RQ3 analyses, other years and further checks | Chapter 10 (10.1–10.4) |
+| `step6-single` | GP-single and the walking-weight re-scoring | Sections 10.4 and 10.5 |

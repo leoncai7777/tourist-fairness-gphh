@@ -237,3 +237,11 @@ outputs/search/formal/
 
 # Step 6 test evaluation: blocks, rule list and pass record stay local (large; per-visitor rows); records written from them are kept
 outputs/test/
+# Tables from itinerary-drl: the data's licence is not stated, keep local only (download as in data/README.md)
+data/verona/poi_it_complete.csv
+data/verona/poi_time_travel.csv
+data/verona/log_crowd.csv
+data/verona/poi_popularity_train.csv
+
+# Google Drive sync temp files
+.tmp.driveupload/
