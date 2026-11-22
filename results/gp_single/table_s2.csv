@@ -1,0 +1,4 @@
+pair,n,zeros,m,median difference,95% low,95% high,coverage,rank-biserial r,note,interval
+GP-single - GP-fixed,30,0,30,0.0087403400445,0.002078406887,0.016248795294,0.9572260547429323,0.513978494623656,,"per comparison, not adjusted for the three"
+GP-single - GP-prop,30,0,30,0.012025234011,0.000198800184,0.025461504572,0.9572260547429323,0.5870967741935483,,"per comparison, not adjusted for the three"
+GP-single - GP-adaptive,30,0,30,-0.0182954499765,-0.029741372831,-0.008514795958,0.9572260547429323,-0.6043010752688172,,"per comparison, not adjusted for the three"

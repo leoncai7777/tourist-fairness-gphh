@@ -1,0 +1,4 @@
+method,run,place,rule id,display
+GP-fixed,7,15,GP-fixed_07_006,GP-fixed_07_006_display
+GP-prop,4,15,GP-prop_04_050,GP-prop_04_050_display
+GP-adaptive,28,15,GP-adaptive_28_029,GP-adaptive_28_029_display

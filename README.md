@@ -21,7 +21,8 @@ All experiments are done and frozen. The report is in its final draft and will b
 | `configs/` | Frozen settings of the search, the test evaluation and the further checks |
 | `tests/` | Tests: `python3 -m pytest tests -q` |
 | `data/` | VeronaCard 2019 and how to get the other files (`data/README.md`) |
-| `outputs/` | Small records and figures; large outputs (runs, test blocks) are not committed |
+| `outputs/` | Records of the checks and the pilot, and the data-exploration figures; large outputs (runs, test blocks) are not committed |
+| `results/` | Frozen result tables and figures behind Chapter 10 of the report (see below) |
 
 ## Requirements
 
@@ -36,13 +37,14 @@ All experiments are done and frozen. The report is in its final draft and will b
 
 Run from the repository root, at the tag of each step.
 
-1. Prepare the data: `python3 src/preprocess.py`
-2. Formal runs, 30 per method (about 9 hours with 12 processes): `python3 tools/run_formal.py`
-3. Test evaluation (about 12 hours): `python3 analysis/reproduce.py`, then `python3 analysis/run_test.py --workers 12`
-4. Analyses: `python3 analysis/rq1.py`, `rq2.py`, `rq3.py`, `others.py`; further checks with `analysis/further.py --scenario configs/further_*.json`
-5. GP-single and the walking weight: `python3 addendum/single.py check | run | reproduce | tables | beta`
+1. Re-implementation of the single-tourist GPHH (Step 1): put the TOPTW instances from the [KU Leuven orienteering page](https://www.mech.kuleuven.be/en/cib/op) into `data/toptw/`, then `python3 src/single_gphh.py` and `python3 src/reproduction_report.py`
+2. Prepare the data: `python3 src/preprocess.py`
+3. Formal runs, 30 per method (about 9 hours with 12 processes): `python3 tools/run_formal.py`
+4. Test evaluation (about 12 hours): `python3 analysis/reproduce.py`, then `python3 analysis/run_test.py --workers 12`
+5. Analyses: `python3 analysis/rq1.py`, `rq2.py`, `rq3.py`, `others.py`; further checks with `analysis/further.py --scenario configs/further_*.json`
+6. GP-single and the walking weight: `python3 addendum/single.py check | run | reproduce | tables | beta`
 
-Every run checks the hashes of its code, data and settings, and stops if they differ from those recorded.
+Every run checks the hashes of its code, data and settings, and stops if they differ from those recorded. Comments in the code refer to the design documents (`search_design.md`, `simulator_design.md`, `implementation_protocol.md`, the Step 6 plan); they are not in this repository, and their content is in Chapters 8 and 9 and Appendix B of the report.
 
 ## Frozen snapshots and the report
 
@@ -51,3 +53,19 @@ Every run checks the hashes of its code, data and settings, and stops if they di
 | `step5-formal` | Code and settings of the 90 formal runs and the tuned rule | Chapters 8 and 9 |
 | `step6-formal` | Test evaluation, the RQ1–RQ3 analyses, other years and further checks | Chapter 10 (10.1–10.4) |
 | `step6-single` | GP-single and the walking-weight re-scoring | Sections 10.4 and 10.5 |
+
+## Results
+
+| Folder | Report |
+|---|---|
+| `results/2019/rq1`, `rq2`, `rq3`, `others` | Sections 10.1–10.3; Appendices C.2–C.5 |
+| `results/2022`, `results/2023` | Section 10.4, other years |
+| `results/further/` | Section 10.4, further checks and the constant $h_2$ |
+| `results/walking_weight/` | Section 10.4, walking weight |
+| `results/gp_single/` | Section 10.5 |
+
+The figures in the report were redrawn in one style from these tables, without changing their data.
+
+## Licence
+
+Code: MIT (`LICENSE`). Data: see `data/README.md`.
