@@ -8,7 +8,7 @@ A next-stop rule for each visitor weighs the visitor's satisfaction against fair
 
 ## Status (November 2026)
 
-All experiments are done and frozen. The report is in its final draft and will be added here when it is submitted.
+The code is complete and a first full set of experiments has been run. The report is being written and will be added here when it is submitted.
 
 ## Folders
 
